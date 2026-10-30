@@ -1,0 +1,19 @@
+#!/bin/sh
+# Refuse to commit anything that looks like real health data.
+# Enable with: git config core.hooksPath .githooks
+status=0
+for f in $(git diff --cached --name-only --diff-filter=ACMR); do
+    case "$f" in
+        *.db|*.sqlite|*.sqlite3|*.zip|*.ccda|*.xdm|*export.xml|*export_cda.xml|*clinical-records/*)
+            echo "pre-commit: refusing to commit possible health data: $f" >&2
+            status=1 ;;
+        tests/*) ;;
+        *.json|*.xml)
+            if git show ":$f" | grep -q '"resourceType"\|<ClinicalDocument'; then
+                echo "pre-commit: $f looks like FHIR/C-CDA data outside tests/" >&2
+                status=1
+            fi ;;
+    esac
+done
+[ $status -eq 0 ] || echo "If this is synthetic test data, put it under tests/." >&2
+exit $status

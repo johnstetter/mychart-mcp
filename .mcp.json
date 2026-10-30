@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mychart": {
+      "command": "uv",
+      "args": ["run", "--quiet", "mychart-mcp", "serve"]
+    }
+  }
+}

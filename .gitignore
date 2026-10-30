@@ -1,0 +1,37 @@
+# --- Health data: never commit ---------------------------------------------
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.zip
+apple_health_export/
+export.xml
+export_cda.xml
+clinical-records/
+*.ccda
+*.xdm
+HealthData/
+
+# --- Python ----------------------------------------------------------------
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Secrets / local config ------------------------------------------------
+.env
+.env.*
+.claude/settings.local.json
+
+# --- OS / editors ----------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp

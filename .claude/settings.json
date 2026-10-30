@@ -1,0 +1,9 @@
+{
+  "enabledMcpjsonServers": ["mychart"],
+  "permissions": {
+    "deny": [
+      "WebFetch",
+      "WebSearch"
+    ]
+  }
+}
