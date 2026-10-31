@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from .db import connect_rw, db_path
+from .db import connect_ro, connect_rw, db_path
 
 
 def _import(args: argparse.Namespace) -> int:
@@ -153,6 +153,24 @@ def _stats(args: argparse.Namespace) -> int:
         print(f"Imported via {imp['origin']} at {imp['imported_at']}")
     if summary["sources"]:
         print("Sources: " + ", ".join(summary["sources"]))
+
+    # Per-import breakdown, so overlapping imports (Apple Health vs direct sync) can be compared.
+    conn = connect_ro()
+    try:
+        rows = conn.execute(
+            "SELECT origin, source, resource_type, COUNT(*) n, MIN(substr(date,1,10)) first, "
+            "MAX(substr(date,1,10)) last FROM resources "
+            "GROUP BY origin, source, resource_type ORDER BY origin, source, n DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+    current = None
+    for row in rows:
+        if (row["origin"], row["source"]) != current:
+            current = (row["origin"], row["source"])
+            print(f"\n{row['origin']} — {row['source'] or 'unknown source'}")
+        span = f"{row['first'] or '?'} – {row['last'] or '?'}"
+        print(f"  {row['resource_type']:<20} {row['n']:>6}  {span}")
     return 0
 
 

@@ -267,3 +267,9 @@ def test_client_errors_are_not_retried(monkeypatch):
     with pytest.raises(epic.FhirError, match="HTTP 403"):
         epic.Http(BASE).get("Procedure")
     assert len(calls) == 1
+
+
+def test_stats_breaks_down_by_origin(synced, monkeypatch, capsys):
+    assert run_cli(monkeypatch, "stats") == 0
+    out = capsys.readouterr().out
+    assert "fhir — Example Health" in out

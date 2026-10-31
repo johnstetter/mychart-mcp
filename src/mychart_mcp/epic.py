@@ -328,7 +328,7 @@ def fetch_chart(
                     inline_note(http, doc)
                 except FhirError:
                     problems["note text unavailable"] += 1
-                if i % 25 == 0 or i == len(found):
+                if i % max(25, len(found) // 10) == 0 or i == len(found):
                     progress(f"    note text {i}/{len(found)}")
         resources.extend(found)
     return resources, problems
