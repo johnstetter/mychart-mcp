@@ -207,3 +207,63 @@ def test_forget_asks_first(synced, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: "n")
     assert run_cli(monkeypatch, "forget", "fhir") == 1
     assert server.data_summary()["record_types"]
+
+
+class FakeResponse:
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self.body
+
+
+def flaky_urlopen(monkeypatch, failures):
+    """Patch urlopen to raise each of `failures` in turn, then succeed."""
+    calls = []
+
+    def urlopen(req, timeout):
+        calls.append(req.full_url)
+        if len(calls) <= len(failures):
+            raise failures[len(calls) - 1]
+        return FakeResponse(b'{"resourceType": "Bundle"}')
+
+    monkeypatch.setattr(epic.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(epic.time, "sleep", lambda _: None)
+    return calls
+
+
+def http_error(code):
+    return epic.urllib.error.HTTPError(BASE, code, "x", {}, None)
+
+
+def test_timeouts_and_gateway_errors_are_retried(monkeypatch):
+    calls = flaky_urlopen(monkeypatch, [TimeoutError("read timed out"), http_error(504)])
+    assert epic.Http(BASE).get_json("Observation") == {"resourceType": "Bundle"}
+    assert len(calls) == 3
+
+
+def test_persistent_timeout_skips_that_search_only(monkeypatch):
+    class SlowLabs(FakeHttp):
+        def get(self, url, accept="application/fhir+json"):
+            if "laboratory" in url:
+                raise epic.FhirError("timed out")
+            return super().get(url, accept)
+
+    lines = []
+    resources, problems = epic.fetch_chart(SlowLabs(), "p1", progress=lines.append)
+    assert any(p.startswith("Observation (laboratory):") for p in problems)
+    assert any("DocumentReference" in r["resourceType"] for r in resources)
+    assert any("skipped" in line for line in lines)
+
+
+def test_client_errors_are_not_retried(monkeypatch):
+    calls = flaky_urlopen(monkeypatch, [http_error(403)])
+    with pytest.raises(epic.FhirError, match="HTTP 403"):
+        epic.Http(BASE).get("Procedure")
+    assert len(calls) == 1

@@ -56,10 +56,15 @@ class FhirError(Exception):
 class Http:
     """GETs against one FHIR server. Refuses to send the token to any other host."""
 
-    def __init__(self, base: str, token: str | None = None, timeout: float = 60) -> None:
+    RETRY_STATUSES = {502, 503, 504}
+
+    def __init__(
+        self, base: str, token: str | None = None, timeout: float = 120, attempts: int = 3
+    ) -> None:
         self.base = base.rstrip("/") + "/"
         self.token = token
         self.timeout = timeout
+        self.attempts = attempts
 
     def resolve(self, url: str) -> str:
         full = urllib.parse.urljoin(self.base, url)
@@ -72,18 +77,29 @@ class Http:
         headers = {"Accept": accept}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
-        try:
-            with urllib.request.urlopen(
-                urllib.request.Request(full, headers=headers), timeout=self.timeout
-            ) as resp:
-                return resp.read()
-        except urllib.error.HTTPError as e:
-            raise FhirError(f"HTTP {e.code} for {_redact(full)}") from None
-        except urllib.error.URLError as e:
-            raise FhirError(f"{e.reason} for {_redact(full)}") from None
+        # Large charts make some Epic searches slow; retry timeouts and gateway errors.
+        for attempt in range(1, self.attempts + 1):
+            try:
+                with urllib.request.urlopen(
+                    urllib.request.Request(full, headers=headers), timeout=self.timeout
+                ) as resp:
+                    return resp.read()
+            except urllib.error.HTTPError as e:
+                if e.code not in self.RETRY_STATUSES or attempt == self.attempts:
+                    raise FhirError(f"HTTP {e.code} for {_redact(full)}") from None
+            except (TimeoutError, urllib.error.URLError) as e:
+                if attempt == self.attempts:
+                    reason = getattr(e, "reason", None) or "timed out"
+                    raise FhirError(f"{reason} for {_redact(full)}") from None
+            time.sleep(2**attempt)
+        raise AssertionError("unreachable")
 
     def get_json(self, url: str, accept: str = "application/fhir+json") -> dict:
-        return json.loads(self.get(url, accept))
+        body = self.get(url, accept)
+        try:
+            return json.loads(body)
+        except ValueError:
+            raise FhirError(f"Response wasn't JSON for {_redact(self.resolve(url))}") from None
 
 
 def _redact(url: str) -> str:
@@ -291,7 +307,9 @@ def inline_note(http: Http, doc: dict) -> bool:
     return False
 
 
-def fetch_chart(http: Http, patient_id: str) -> tuple[list[dict], Counter]:
+def fetch_chart(
+    http: Http, patient_id: str, progress: Callable[[str], object] = lambda _: None
+) -> tuple[list[dict], Counter]:
     """Download everything the app is allowed to read. Returns (resources, problems)."""
     problems: Counter = Counter()
     resources = [http.get_json(f"Patient/{urllib.parse.quote(patient_id)}")]
@@ -301,13 +319,17 @@ def fetch_chart(http: Http, patient_id: str) -> tuple[list[dict], Counter]:
             found = list(search(http, rtype, {"patient": patient_id, **params}))
         except FhirError as e:
             problems[f"{label}: {e}"] += 1
+            progress(f"  {label:<38} skipped")
             continue
+        progress(f"  {label:<38} {len(found)}")
         if rtype == "DocumentReference":
-            for doc in found:
+            for i, doc in enumerate(found, 1):
                 try:
                     inline_note(http, doc)
                 except FhirError:
                     problems["note text unavailable"] += 1
+                if i % 25 == 0 or i == len(found):
+                    progress(f"    note text {i}/{len(found)}")
         resources.extend(found)
     return resources, problems
 

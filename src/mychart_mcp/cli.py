@@ -83,7 +83,9 @@ def _sync(args: argparse.Namespace) -> int:
             open_url=open_url,
         )
         print("Signed in. Downloading records…", flush=True)
-        resources, problems = epic.fetch_chart(epic.Http(fhir_base, token), patient_id)
+        resources, problems = epic.fetch_chart(
+            epic.Http(fhir_base, token), patient_id, progress=lambda s: print(s, flush=True)
+        )
     except (epic.FhirError, OSError) as e:
         print(e, file=sys.stderr)
         return 1
