@@ -174,7 +174,10 @@ The server itself:
   - **Claude Desktop:** turn off other connectors in the chat's tools menu.
   - **Hermes:** check which toolsets and messaging platforms are enabled. Memories and session
     history are stored under `~/.hermes/`.
-- **Revoking:** remove Apple Health under MyChart → Linked Apps, and delete the database.
+- **Revoking:** remove Apple Health and/or mychart-mcp under MyChart → Linked Apps, and
+  delete the database.
+
+See [TERMS.md](TERMS.md) for the terms of use and privacy statement shown to Epic.
 
 ## Project layout
 
