@@ -57,7 +57,39 @@ Conditions, labs and vitals, medications, procedures, diagnostic
 reports, immunizations, and allergies, as FHIR resources. **Clinical note text is not
 included:** Apple's export only has each note's type, date, and author, plus a link back to
 the health system. Notes are searchable by those fields, not by their content. Getting note
-text requires a direct FHIR connection (on the roadmap).
+text requires a direct FHIR connection (see below).
+
+### Direct Epic sync (experimental)
+
+`mychart-mcp sync` signs in to MyChart in your browser (SMART on FHIR, read-only scopes, PKCE)
+and downloads your chart straight from your health system's Epic FHIR R4 endpoint, including
+clinical note text. The access token is held in memory for that run only and never saved.
+This is the only command that uses the network; `serve` never does.
+
+You need a patient-app client ID from [fhir.epic.com](https://fhir.epic.com), registered with
+`http://127.0.0.1:8765/callback` (sandbox) and/or `https://127.0.0.1:8765/callback`
+(production, which Epic requires to be https) as redirect URIs.
+
+```sh
+# Try it against Epic's sandbox first, in a scratch database
+MYCHART_MCP_DB=/tmp/sandbox.db uv run mychart-mcp sync --sandbox --client-id <non-production id>
+
+# Your health system (find its R4 base URL in Epic's open.epic.com endpoint list)
+brew install mkcert && mkcert -install && mkcert 127.0.0.1   # once, for the https redirect
+uv run mychart-mcp sync --fhir-base <R4 base URL> --client-id <production id> \
+    --redirect-uri https://127.0.0.1:8765/callback --cert 127.0.0.1.pem --key 127.0.0.1-key.pem
+```
+
+Flags can also come from `MYCHART_MCP_FHIR_BASE`, `MYCHART_MCP_CLIENT_ID`,
+`MYCHART_MCP_REDIRECT_URI`, `MYCHART_MCP_CERT` and `MYCHART_MCP_KEY`. Re-running replaces
+that health system's synced records.
+
+Once direct sync covers everything your Apple Health import did (compare `mychart-mcp stats`),
+drop the Apple copy so records aren't duplicated:
+
+```sh
+uv run mychart-mcp forget apple_health   # asks first; --source limits it to one health system
+```
 
 ## Usage
 
@@ -148,8 +180,9 @@ The server itself:
 
 ```
 src/mychart_mcp/
-  cli.py        import / stats / serve / client-config commands
+  cli.py        import / sync / stats / serve / client-config commands
   importers.py  Apple Health export.zip → SQLite
+  epic.py       Epic SMART on FHIR sign-in and download (the only network code)
   fhir.py       field extraction from FHIR R4 and DSTU2 resources
   db.py         schema and read-write / read-only connections
   server.py     MCP tools
@@ -170,8 +203,8 @@ FHIR/C-CDA files outside `tests/`.
 
 ## Roadmap
 
-- Direct Epic FHIR sync (SMART on FHIR, read-only scopes, tokens in the OS keychain), which
-  also brings clinical note text and visit records
+- Direct Epic sync: refresh tokens in the OS keychain so re-syncing doesn't need a browser
+  sign-in, and de-duplicating records that arrive both via Apple Health and direct sync
 - MyChart "Download My Record" (C-CDA) importer
 - Encrypted database (SQLCipher)
 - Care-team messages: a prompt/template for turning chart facts into a clear message, and

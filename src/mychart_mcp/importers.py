@@ -50,12 +50,7 @@ def import_apple_health(conn: sqlite3.Connection, zip_path: Path) -> Counter:
         sources = _clinical_sources(zf)
 
         with conn:
-            conn.execute(
-                "DELETE FROM resources_fts WHERE rowid IN "
-                "(SELECT rowid FROM resources WHERE origin = ?)",
-                (APPLE_ORIGIN,),
-            )
-            conn.execute("DELETE FROM resources WHERE origin = ?", (APPLE_ORIGIN,))
+            delete_records(conn, APPLE_ORIGIN)
 
             for name in members:
                 with zf.open(name) as fh:
@@ -66,7 +61,7 @@ def import_apple_health(conn: sqlite3.Connection, zip_path: Path) -> Counter:
                         continue
                 source = sources.get(PurePosixPath(name).name)
                 for resource in iter_resources(doc):
-                    if _insert(conn, APPLE_ORIGIN, source, resource):
+                    if insert_resource(conn, APPLE_ORIGIN, source, resource):
                         counts[resource["resourceType"]] += 1
                     else:
                         counts["_duplicate"] += 1
@@ -83,7 +78,20 @@ def import_apple_health(conn: sqlite3.Connection, zip_path: Path) -> Counter:
     return counts
 
 
-def _insert(conn: sqlite3.Connection, origin: str, source: str | None, resource: dict) -> bool:
+def delete_records(conn: sqlite3.Connection, origin: str, source: str | None = None) -> int:
+    """Delete one origin's rows (optionally only one source) and their search index entries."""
+    where = "origin = ?" + (" AND source = ?" if source is not None else "")
+    params = (origin,) if source is None else (origin, source)
+    conn.execute(
+        f"DELETE FROM resources_fts WHERE rowid IN (SELECT rowid FROM resources WHERE {where})",
+        params,
+    )
+    return conn.execute(f"DELETE FROM resources WHERE {where}", params).rowcount
+
+
+def insert_resource(
+    conn: sqlite3.Connection, origin: str, source: str | None, resource: dict
+) -> bool:
     x = extract(resource)
     cur = conn.execute(
         """INSERT OR IGNORE INTO resources
