@@ -68,7 +68,10 @@ This is the only command that uses the network; `serve` never does.
 
 You need a patient-app client ID from [fhir.epic.com](https://fhir.epic.com), registered with
 `http://127.0.0.1:8765/callback` (sandbox) and/or `https://127.0.0.1:8765/callback`
-(production, which Epic requires to be https) as redirect URIs.
+(production, which Epic requires to be https) as redirect URIs. **[docs/epic-setup.md](docs/epic-setup.md)
+walks through the whole setup**: registering the app (every form field and API), sandbox
+testing, going to production, finding your health system's endpoint, the certificate, and
+troubleshooting.
 
 ```sh
 # Try it against Epic's sandbox first, in a scratch database
