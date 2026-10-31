@@ -60,6 +60,14 @@ def _sync(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    for path in (args.cert, args.key):
+        if path and not Path(path).expanduser().is_file():
+            print(
+                f"Certificate file not found: {Path(path).expanduser().absolute()}\n"
+                "Create it with `mkcert 127.0.0.1` in that folder (after `mkcert -install`).",
+                file=sys.stderr,
+            )
+            return 1
 
     def open_url(url: str) -> None:
         print(f"Opening your browser to sign in. If it doesn't open, visit:\n  {url}\n", flush=True)
