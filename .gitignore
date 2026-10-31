@@ -29,6 +29,8 @@ htmlcov/
 .env
 .env.*
 .claude/settings.local.json
+# mkcert certificate and key for the https sync redirect
+*.pem
 
 # --- OS / editors ----------------------------------------------------------
 .DS_Store
