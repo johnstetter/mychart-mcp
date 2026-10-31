@@ -87,6 +87,10 @@ Flags can also come from `MYCHART_MCP_FHIR_BASE`, `MYCHART_MCP_CLIENT_ID`,
 `MYCHART_MCP_REDIRECT_URI`, `MYCHART_MCP_CERT` and `MYCHART_MCP_KEY`. Re-running replaces
 that health system's synced records.
 
+On macOS, `sync --remember` saves a device key in the Keychain, so later runs can use
+`sync --unattended` with no browser, and `schedule-config` prints a LaunchAgent that syncs
+daily. See [scheduled syncs](docs/epic-setup.md#7-scheduled-syncs-macos).
+
 Once direct sync covers everything your Apple Health import did (compare `mychart-mcp stats`),
 drop the Apple copy so records aren't duplicated:
 
@@ -209,8 +213,8 @@ FHIR/C-CDA files outside `tests/`.
 
 ## Roadmap
 
-- Direct Epic sync: refresh tokens in the OS keychain so re-syncing doesn't need a browser
-  sign-in, and de-duplicating records that arrive both via Apple Health and direct sync
+- Direct Epic sync: de-duplicating records that arrive both via Apple Health and direct sync,
+  and saved sign-ins outside macOS
 - MyChart "Download My Record" (C-CDA) importer
 - Encrypted database (SQLCipher)
 - Care-team messages: a prompt/template for turning chart facts into a clear message, and

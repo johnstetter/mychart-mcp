@@ -18,8 +18,10 @@ with Epic Systems, Apple, or your health care provider.
   learn about your family or anyone other than you.
 - **Read-only access.** The app requests read-only permission. It cannot change anything in
   your medical record.
-- **Sign-in is not stored.** The access token from MyChart is held in memory only while a sync
-  runs and is discarded afterwards.
+- **Sign-ins stay on your device.** Access tokens from MyChart are held in memory only while a
+  sync runs. If you choose to save a sign-in for scheduled syncs (`sync --remember`), a key
+  for your device is stored in your macOS Keychain; it is never sent to the developer.
+  `mychart-mcp logout` deletes it, and removing the app in MyChart revokes it.
 
 ## AI assistants you connect
 

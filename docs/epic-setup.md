@@ -172,8 +172,43 @@ avoid repeating the flags, set `MYCHART_MCP_FHIR_BASE`, `MYCHART_MCP_CLIENT_ID`,
 Run it in your own terminal, not through an AI assistant's shell tool, so your records'
 contents stay out of the assistant's context. The summary contains counts only.
 
-Every run needs a browser sign-in (no refresh tokens yet). Re-running replaces that health
-system's synced records.
+Re-running replaces that health system's synced records. Without a saved sign-in (next
+section), every run opens the browser.
+
+## 7. Scheduled syncs (macOS)
+
+Epic doesn't give public desktop apps refresh tokens. Instead, an app with **Can Register
+Dynamic Clients** registers a per-device client after one browser sign-in: it creates an RSA
+key, sends Epic only the public half, and from then on gets access tokens by signing a
+five-minute JWT with that key (`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`).
+
+```sh
+# Once, interactively: sign in and save a device key in the login Keychain
+uv run mychart-mcp sync --remember --fhir-base <R4 base> --client-id <production id> \
+    --redirect-uri https://127.0.0.1:8765/callback --cert 127.0.0.1.pem --key 127.0.0.1-key.pem
+
+# From then on, no browser (fails instead of prompting if the saved sign-in stops working)
+uv run mychart-mcp sync --unattended --fhir-base <R4 base>
+
+# Daily at 05:00 via launchd
+uv run mychart-mcp schedule-config --fhir-base <R4 base> > ~/Library/LaunchAgents/io.github.mychart-mcp.sync.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.mychart-mcp.sync.plist
+launchctl kickstart gui/$(id -u)/io.github.mychart-mcp.sync     # run once now to test
+```
+
+- If MyChart's consent screen asks **how long** to allow access, choose the longest option.
+  The saved sign-in stops working when that period ends or you remove the app under Linked
+  Apps; `--unattended` runs then fail, and the next interactive `sync --remember` replaces it.
+- The key is stored with Apple's `/usr/bin/security` tool (service `mychart-mcp`, one item per
+  FHIR base URL), passed on stdin so it never appears in the process list. Going through
+  Apple's tool, not Python, means a Homebrew Python upgrade can't trigger a Keychain access
+  prompt that a background job can't answer.
+- A LaunchAgent runs only while you're logged in to the Mac's GUI. After a reboot with no
+  login, the login Keychain is locked and runs fail until you log in. Output goes to
+  `~/Library/Logs/mychart-mcp-sync.log` (counts only). `schedule-config` takes `--hour`,
+  `--minute` and `--label`.
+- `mychart-mcp logout --fhir-base <R4 base>` deletes the saved key. Remove the app in MyChart
+  to revoke it on Epic's side as well.
 
 ### If you also imported from Apple Health
 
@@ -191,6 +226,8 @@ Keep any Apple Health source you haven't set up for direct sync.
 
 | Symptom | Cause / fix |
 |---|---|
+| "Saved sign-in was rejected … may have been revoked" | Access period ended or the app was removed in MyChart. Run `sync --remember` interactively again. |
+| "Couldn't read the Keychain" in the scheduled log | The login Keychain is locked (no GUI login since boot). Log in at the Mac. |
 | "OAuth2 Error: Something went wrong…" on your health system's page | The production client hasn't reached that health system yet (wait up to a day after marking ready), or the system turned off automatic distribution (ask them or Epic support). Epic shows the same page for request problems, so check the sandbox still works. |
 | Sandbox login says "Login failed" | Use a sandbox test-patient login, not your real MyChart or fhir.epic.com account. |
 | "Timed out waiting for sign-in." | The browser never reached the redirect. Did it open? If not, open the printed URL yourself. Sign-in must finish within 5 minutes. |
@@ -213,6 +250,8 @@ Keep any Apple Health source you haven't set up for direct sync.
 - `search`: follows `next` links and drops Epic's `OperationOutcome` warning entries.
 - `inline_note`: fetches a note's `Binary` (HTML, then plain text, then RTF) and stores it as
   inline base64 `attachment.data`. `fhir.extract` then indexes it like any inline note.
+- `register_client`, `client_assertion`, `saved_login`: dynamic client registration and
+  JWT-bearer token requests for saved sign-ins. `keychain.py` stores the credential.
 - `fetch_chart` → `store`: download everything, then replace the `fhir` origin's rows for
   that source in one transaction.
 

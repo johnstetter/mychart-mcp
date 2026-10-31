@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 from collections import Counter
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler
 from socketserver import TCPServer
@@ -203,31 +204,48 @@ class CallbackListener:
             self.server.server_close()
 
 
+def _post(
+    url: str, *, form: dict | None = None, json_body: dict | None = None, bearer: str | None = None
+) -> dict:
+    headers = {"Accept": "application/json"}
+    if form is not None:
+        data = urllib.parse.urlencode(form).encode()
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+    else:
+        data = json.dumps(json_body).encode()
+        headers["Content-Type"] = "application/json"
+    if bearer:
+        headers["Authorization"] = f"Bearer {bearer}"
+    req = urllib.request.Request(url, data=data, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raise FhirError(f"HTTP {e.code} from {_redact(url)}") from None
+    except (TimeoutError, urllib.error.URLError, ValueError) as e:
+        raise FhirError(f"{getattr(e, 'reason', e)} from {_redact(url)}") from None
+
+
 def exchange_code(
     token_url: str, *, code: str, client_id: str, redirect_uri: str, verifier: str
 ) -> dict:
-    data = urllib.parse.urlencode(
-        {
+    return _post(
+        token_url,
+        form={
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
             "client_id": client_id,
             "code_verifier": verifier,
-        }
-    ).encode()
-    req = urllib.request.Request(
-        token_url,
-        data=data,
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
         },
     )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        raise FhirError(f"Token exchange failed: HTTP {e.code}") from None
+
+
+@dataclass
+class Login:
+    access_token: str
+    patient_id: str
+    smart: dict  # the server's .well-known/smart-configuration
 
 
 def login(
@@ -238,8 +256,8 @@ def login(
     cert: str | None = None,
     key: str | None = None,
     open_url: Callable[[str], object],
-) -> tuple[str, str]:
-    """Run the browser sign-in. Returns (access_token, patient_id); nothing is saved."""
+) -> Login:
+    """Run the browser sign-in. Nothing is saved."""
     smart = Http(fhir_base).get_json(".well-known/smart-configuration", "application/json")
     verifier, challenge = pkce_pair()
     state = secrets.token_urlsafe(16)
@@ -264,7 +282,105 @@ def login(
     )
     if not token.get("access_token") or not token.get("patient"):
         raise FhirError("The server didn't return an access token and patient ID.")
-    return token["access_token"], token["patient"]
+    return Login(token["access_token"], token["patient"], smart)
+
+
+# --- Saved sign-in (Epic dynamic client registration) ------------------------------------
+#
+# After one browser sign-in, register a per-device client that authenticates with its own
+# RSA key. Later runs sign a short-lived JWT with that key to get a fresh access token, so
+# scheduled syncs need no browser. The saved credential is that key plus the client ID.
+
+JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _int_b64url(n: int) -> str:
+    return _b64url(n.to_bytes((n.bit_length() + 7) // 8, "big"))
+
+
+def register_client(login: Login, software_id: str) -> dict:
+    """Register this device as a dynamic client. Returns the credential to save."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    numbers = private.public_key().public_numbers()
+    kid = secrets.token_hex(8)
+    jwk = {
+        "kty": "RSA",
+        "kid": kid,
+        "alg": "RS384",
+        "e": _int_b64url(numbers.e),
+        "n": _int_b64url(numbers.n),
+    }
+    endpoint = login.smart.get("registration_endpoint") or (
+        login.smart["authorization_endpoint"].rsplit("/", 1)[0] + "/register"
+    )
+    response = _post(
+        endpoint,
+        json_body={"software_id": software_id, "jwks": {"keys": [jwk]}},
+        bearer=login.access_token,
+    )
+    if not response.get("client_id"):
+        raise FhirError("Registration didn't return a client ID.")
+    pem = private.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    return {
+        "client_id": response["client_id"],
+        "kid": kid,
+        "key": pem,
+        "token_endpoint": login.smart["token_endpoint"],
+        "patient": login.patient_id,
+    }
+
+
+def client_assertion(credential: dict, now: float | None = None) -> str:
+    """A five-minute RS384 JWT proving possession of the saved key."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    issued = int(now if now is not None else time.time())
+    header = {"alg": "RS384", "typ": "JWT", "kid": credential["kid"]}
+    claims = {
+        "iss": credential["client_id"],
+        "sub": credential["client_id"],
+        "aud": credential["token_endpoint"],
+        "jti": secrets.token_urlsafe(16),
+        "iat": issued,
+        "nbf": issued,
+        "exp": issued + 300,
+    }
+    signing_input = ".".join(
+        _b64url(json.dumps(part, separators=(",", ":")).encode()) for part in (header, claims)
+    )
+    key = serialization.load_pem_private_key(credential["key"].encode(), password=None)
+    signature = key.sign(signing_input.encode(), padding.PKCS1v15(), hashes.SHA384())
+    return f"{signing_input}.{_b64url(signature)}"
+
+
+def saved_login(credential: dict) -> tuple[str, str]:
+    """Get an access token with the saved key. Returns (access_token, patient_id)."""
+    try:
+        token = _post(
+            credential["token_endpoint"],
+            form={
+                "grant_type": JWT_BEARER,
+                "assertion": client_assertion(credential),
+                "client_id": credential["client_id"],
+            },
+        )
+    except FhirError as e:
+        raise FhirError(f"Saved sign-in was rejected ({e}); it may have been revoked.") from None
+    if not token.get("access_token"):
+        raise FhirError("Saved sign-in didn't return an access token.")
+    return token["access_token"], token.get("patient") or credential["patient"]
 
 
 # --- Fetch and store ----------------------------------------------------------------------

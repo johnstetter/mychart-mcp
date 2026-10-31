@@ -27,6 +27,7 @@ uv run ruff format .     # format
 
 - `src/mychart_mcp/fhir.py`: field extraction from FHIR R4/DSTU2 resources
 - `src/mychart_mcp/importers.py`: Apple Health export.zip → SQLite
+- `src/mychart_mcp/keychain.py`: saved Epic sign-ins (device key) via `/usr/bin/security`
 - `src/mychart_mcp/epic.py`: `sync` command's SMART on FHIR login and download; the only
   module allowed network calls, and `server.py` must never import it
 - `src/mychart_mcp/db.py`: schema; `connect_rw` (importer) / `connect_ro` (server)
