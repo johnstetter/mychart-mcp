@@ -285,8 +285,42 @@ def _schedule_config(args: argparse.Namespace) -> int:
     return 0
 
 
+# A Claude Code folder for asking about your records. Its sessions get the mychart tools but
+# no web or shell access, so text in a record can't get the model to send data anywhere.
+CHAT_SETTINGS = {
+    "enabledMcpjsonServers": ["mychart"],
+    "permissions": {"deny": ["WebFetch", "WebSearch", "Bash"]},
+}
+
+
+def _claude_code_folder(folder: Path) -> int:
+    files = {
+        folder / ".mcp.json": {"mcpServers": {"mychart": _server_entry()}},
+        folder / ".claude" / "settings.json": CHAT_SETTINGS,
+    }
+    existing = [str(f) for f in files if f.exists()]
+    if existing:
+        print("Not overwriting: " + ", ".join(existing), file=sys.stderr)
+        return 1
+    for path, content in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(content, indent=2) + "\n")
+    print(
+        f"Set up {folder} for asking about your records: run `claude` there.\n"
+        "Web and shell tools are denied in that folder. If you've added other connectors\n"
+        "that can send data out (email, Slack, …), deny them too in "
+        f"{folder / '.claude' / 'settings.local.json'}."
+    )
+    return 0
+
+
 def _client_config(args: argparse.Namespace) -> int:
     entry = _server_entry()
+    if args.client == "claude-code":
+        if not args.dir:
+            print("Pass --dir, a folder to create for asking about your records.", file=sys.stderr)
+            return 1
+        return _claude_code_folder(Path(args.dir).expanduser())
     if args.client == "claude":
         print("# Merge into ~/Library/Application Support/Claude/claude_desktop_config.json")
         print(json.dumps({"mcpServers": {"mychart": entry}}, indent=2))
@@ -356,8 +390,11 @@ def main() -> None:
     p.add_argument("--label", default="io.github.mychart-mcp.sync")
     p.set_defaults(func=_schedule_config)
 
-    p = sub.add_parser("client-config", help="Print config for Claude Desktop or Hermes")
-    p.add_argument("client", choices=["claude", "hermes"])
+    p = sub.add_parser(
+        "client-config", help="Print config for Claude Desktop or Hermes, or set up Claude Code"
+    )
+    p.add_argument("client", choices=["claude", "claude-code", "hermes"])
+    p.add_argument("--dir", help="claude-code: folder to create (e.g. ~/HealthChat)")
     p.set_defaults(func=_client_config)
 
     args = parser.parse_args()

@@ -221,9 +221,21 @@ def _post(
         with urllib.request.urlopen(req, timeout=60) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        raise FhirError(f"HTTP {e.code} from {_redact(url)}") from None
+        raise FhirError(f"HTTP {e.code} from {_redact(url)}{_oauth_error(e)}") from None
     except (TimeoutError, urllib.error.URLError, ValueError) as e:
         raise FhirError(f"{getattr(e, 'reason', e)} from {_redact(url)}") from None
+
+
+def _oauth_error(e: urllib.error.HTTPError) -> str:
+    """The OAuth `error`/`error_description` from a failed token or registration call."""
+    try:
+        body = json.loads(e.read(4096))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(body, dict):
+        return ""
+    parts = [str(body[k]) for k in ("error", "error_description") if body.get(k)]
+    return f": {' - '.join(parts)[:300]}" if parts else ""
 
 
 def exchange_code(

@@ -12,8 +12,12 @@ Read-only MCP server over a local SQLite copy of the user's MyChart records. See
 - Personal Claude Code deny rules go in `.claude/settings.local.json` (git-ignored), not `settings.json`.
 - Keep the server read-only: no write tools, database opened with `connect_ro()`, every tool
   annotated `READ_ONLY`. The server must not make network calls.
-- Don't loosen the deny list in `.claude/settings.json` or suggest `curl`/network commands
-  while health data is in the conversation.
+- Never combine the `mychart` MCP server with web or other outbound tools in one session.
+  This repo is the development workspace: web tools are allowed, `.claude/settings.json`
+  denies `mcp__mychart`, and there is no `.mcp.json`. Don't enable the server here. Records
+  are queried from a separate folder made by `mychart-mcp client-config claude-code --dir …`,
+  which denies web and shell tools.
+- Don't run network commands in a session where health data is in the conversation.
 
 ## Commands
 

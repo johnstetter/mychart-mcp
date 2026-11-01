@@ -122,15 +122,16 @@ Desktop apps launch MCP servers with a minimal `PATH` and an arbitrary working d
 point them at the absolute path of this project's executable. Generate the snippet:
 
 ```sh
-uv run mychart-mcp client-config hermes   # Hermes
-uv run mychart-mcp client-config claude   # Claude Desktop
+uv run mychart-mcp client-config hermes                         # Hermes
+uv run mychart-mcp client-config claude                         # Claude Desktop
+uv run mychart-mcp client-config claude-code --dir ~/HealthChat # Claude Code (creates the folder)
 ```
 
 | Client | Config file | Then |
 |---|---|---|
 | Hermes | `~/.hermes/config.yaml` (add under `mcp_servers:`) | Restart Hermes |
 | Claude Desktop | `claude_desktop_config.json` (merge into `mcpServers`) | Quit and reopen Claude |
-| Claude Code | `.mcp.json` in this repo (already set up) | Run `claude` in this directory |
+| Claude Code | `.mcp.json` + `.claude/settings.json` in the folder you pass | Run `claude` in that folder |
 
 Set `MYCHART_MCP_DB` before running `client-config` to bake a non-default path into the
 snippet. After moving the repo, run `uv sync` and regenerate the config.
@@ -175,9 +176,11 @@ The server itself:
 - **Untrusted text:** record text could contain instructions aimed at the model (prompt
   injection). Don't give the same chat tools that can send data out (email, messaging, web
   requests) while your records are in it:
-  - **Claude Code:** `.claude/settings.json` denies web access in this project. Add your own
-    outbound connectors (email, chat, …) to the deny list in `.claude/settings.local.json`.
-    That file is git-ignored.
+  - **Claude Code:** ask about your records from the folder made by
+    `client-config claude-code`, which denies web and shell tools. Add any other outbound
+    connectors (email, chat, …) to the deny list in that folder's
+    `.claude/settings.local.json`. This repo itself is for development: it allows web
+    access and denies the `mychart` tools, so the two never meet in one session.
   - **Claude Desktop:** turn off other connectors in the chat's tools menu.
   - **Hermes:** check which toolsets and messaging platforms are enabled. Memories and session
     history are stored under `~/.hermes/`.

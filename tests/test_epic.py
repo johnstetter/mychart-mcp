@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import threading
 import urllib.parse
 import urllib.request
@@ -273,3 +274,23 @@ def test_stats_breaks_down_by_origin(synced, monkeypatch, capsys):
     assert run_cli(monkeypatch, "stats") == 0
     out = capsys.readouterr().out
     assert "fhir — Example Health" in out
+
+
+def test_claude_code_folder_denies_outbound_tools(tmp_path, monkeypatch):
+    folder = tmp_path / "HealthChat"
+    assert run_cli(monkeypatch, "client-config", "claude-code", "--dir", str(folder)) == 0
+    settings = json.loads((folder / ".claude" / "settings.json").read_text())
+    assert {"WebFetch", "WebSearch", "Bash"} <= set(settings["permissions"]["deny"])
+    assert settings["enabledMcpjsonServers"] == ["mychart"]
+    mcp = json.loads((folder / ".mcp.json").read_text())
+    assert mcp["mcpServers"]["mychart"]["args"] == ["serve"]
+    # Never overwrite an existing setup.
+    assert run_cli(monkeypatch, "client-config", "claude-code", "--dir", str(folder)) == 1
+
+
+def test_dev_repo_denies_the_records_server():
+    from pathlib import Path
+
+    settings = json.loads(Path(".claude/settings.json").read_text())
+    assert "mcp__mychart" in settings["permissions"]["deny"]
+    assert not Path(".mcp.json").exists()
