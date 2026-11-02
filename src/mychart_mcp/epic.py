@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import secrets
 import sqlite3
@@ -69,6 +70,7 @@ class Http:
     """GETs against one FHIR server. Refuses to send the token to any other host."""
 
     RETRY_STATUSES = {502, 503, 504}
+    REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
     def __init__(
         self, base: str, token: str | None = None, timeout: float = 120, attempts: int = 3
@@ -77,6 +79,7 @@ class Http:
         self.token = token
         self.timeout = timeout
         self.attempts = attempts
+        self._conn: http.client.HTTPConnection | None = None
 
     def resolve(self, url: str) -> str:
         full = urllib.parse.urljoin(self.base, url)
@@ -84,7 +87,43 @@ class Http:
             raise FhirError(f"Refusing to follow a link off {self.base}: {_redact(full)}")
         return full
 
-    def get(self, url: str, accept: str = "application/fhir+json") -> bytes:
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+
+    def _request(
+        self, full: str, headers: dict[str, str]
+    ) -> tuple[http.client.HTTPResponse, bytes]:
+        # One kept-alive connection for the whole sync instead of a TLS handshake per request.
+        reused = self._conn is not None
+        if self._conn is None:
+            parts = urllib.parse.urlsplit(self.base)
+            cls = (
+                http.client.HTTPSConnection
+                if parts.scheme == "https"
+                else http.client.HTTPConnection
+            )
+            self._conn = cls(parts.netloc, timeout=self.timeout)
+        parts = urllib.parse.urlsplit(full)
+        path = parts.path + (f"?{parts.query}" if parts.query else "")
+        try:
+            self._conn.request("GET", path, headers=headers)
+            resp = self._conn.getresponse()
+            body = resp.read()
+        except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError):
+            self.close()
+            if not reused:
+                raise
+            return self._request(full, headers)  # the server closed an idle connection
+        except (OSError, http.client.HTTPException):
+            self.close()
+            raise
+        if resp.will_close:
+            self.close()
+        return resp, body
+
+    def get(self, url: str, accept: str = "application/fhir+json", _redirects: int = 5) -> bytes:
         full = self.resolve(url)
         headers = {"Accept": accept}
         if self.token:
@@ -92,17 +131,19 @@ class Http:
         # Large charts make some Epic searches slow; retry timeouts and gateway errors.
         for attempt in range(1, self.attempts + 1):
             try:
-                with urllib.request.urlopen(
-                    urllib.request.Request(full, headers=headers), timeout=self.timeout
-                ) as resp:
-                    return resp.read()
-            except urllib.error.HTTPError as e:
-                if e.code not in self.RETRY_STATUSES or attempt == self.attempts:
-                    raise FhirError(f"HTTP {e.code} for {_redact(full)}") from None
-            except (TimeoutError, urllib.error.URLError) as e:
+                resp, body = self._request(full, headers)
+            except (OSError, http.client.HTTPException) as e:
                 if attempt == self.attempts:
-                    reason = getattr(e, "reason", None) or "timed out"
+                    reason = "timed out" if isinstance(e, TimeoutError) else str(e) or repr(e)
                     raise FhirError(f"{reason} for {_redact(full)}") from None
+            else:
+                if 200 <= resp.status < 300:
+                    return body
+                location = resp.getheader("Location")
+                if resp.status in self.REDIRECT_STATUSES and location and _redirects:
+                    return self.get(location, accept, _redirects - 1)
+                if resp.status not in self.RETRY_STATUSES or attempt == self.attempts:
+                    raise FhirError(f"HTTP {resp.status} for {_redact(full)}")
             time.sleep(2**attempt)
         raise AssertionError("unreachable")
 

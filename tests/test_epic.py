@@ -9,6 +9,7 @@ import threading
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
+from http.server import ThreadingHTTPServer
 
 import pytest
 
@@ -436,43 +437,107 @@ def test_forget_asks_first(synced, monkeypatch):
     assert server.data_summary()["record_types"]
 
 
-class FakeResponse:
-    def __init__(self, body):
-        self.body = body
+class Scripted:
+    """A loopback HTTP/1.1 server that answers each request with the next scripted reply.
 
-    def __enter__(self):
-        return self
+    A reply is a status code, "slow" (sleep past the client's timeout), or "drop" (answer,
+    then close the connection without saying so, like a server timing out an idle one).
+    """
 
-    def __exit__(self, *exc):
-        return False
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.ports: list[int] = []
+        self.paths: list[str] = []
+        scripted = self
 
-    def read(self):
-        return self.body
+        class Handler(epic.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_GET(self):
+                scripted.ports.append(self.client_address[1])
+                scripted.paths.append(self.path)
+                reply = scripted.replies.pop(0) if scripted.replies else 200
+                if reply == "slow":
+                    threading.Event().wait(1)  # time.sleep is patched out below
+                    reply = 200
+                if isinstance(reply, tuple):  # (status, Location)
+                    self.send_response(reply[0])
+                    self.send_header("Location", reply[1])
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                body = b'{"resourceType": "Bundle"}' if reply in (200, "drop") else b""
+                self.send_response(200 if reply == "drop" else reply)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                if reply == "drop":
+                    self.close_connection = True
+
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}/R4/"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
 
 
-def flaky_urlopen(monkeypatch, failures):
-    """Patch urlopen to raise each of `failures` in turn, then succeed."""
-    calls = []
+@pytest.fixture()
+def scripted(monkeypatch):
+    monkeypatch.setattr(epic.time, "sleep", lambda _: None)  # no backoff between retries
+    servers = []
 
-    def urlopen(req, timeout):
-        calls.append(req.full_url)
-        if len(calls) <= len(failures):
-            raise failures[len(calls) - 1]
-        return FakeResponse(b'{"resourceType": "Bundle"}')
+    def make(*replies):
+        servers.append(Scripted(*replies))
+        return servers[-1]
 
-    monkeypatch.setattr(epic.urllib.request, "urlopen", urlopen)
-    monkeypatch.setattr(epic.time, "sleep", lambda _: None)
-    return calls
-
-
-def http_error(code):
-    return epic.urllib.error.HTTPError(BASE, code, "x", {}, None)
+    yield make
+    for s in servers:
+        s.close()
 
 
-def test_timeouts_and_gateway_errors_are_retried(monkeypatch):
-    calls = flaky_urlopen(monkeypatch, [TimeoutError("read timed out"), http_error(504)])
-    assert epic.Http(BASE).get_json("Observation") == {"resourceType": "Bundle"}
-    assert len(calls) == 3
+def test_one_connection_for_many_requests(scripted):
+    srv = scripted()
+    http = epic.Http(srv.base)
+    for _ in range(5):
+        assert http.get_json("Observation") == {"resourceType": "Bundle"}
+    assert len(srv.ports) == 5
+    assert len(set(srv.ports)) == 1
+
+
+def test_reconnects_when_the_server_drops_an_idle_connection(scripted):
+    srv = scripted("drop", 200)
+    http = epic.Http(srv.base)
+    http.get("Observation")
+    http.get("Observation")
+    assert len(srv.paths) == 2
+    assert len(set(srv.ports)) == 2
+
+
+def test_timeouts_and_gateway_errors_are_retried(scripted):
+    srv = scripted("slow", 504, 200)
+    assert epic.Http(srv.base, timeout=0.3).get_json("Observation") == {"resourceType": "Bundle"}
+    assert len(srv.paths) == 3
+
+
+def test_client_errors_are_not_retried(scripted):
+    srv = scripted(403)
+    with pytest.raises(epic.FhirError, match="HTTP 403"):
+        epic.Http(srv.base).get("Procedure")
+    assert len(srv.paths) == 1
+
+
+def test_redirects_stay_on_the_same_host(scripted):
+    srv = scripted((302, "/R4/Binary/moved"), 200, (302, "https://elsewhere.test/Binary/x"))
+    http = epic.Http(srv.base)
+    assert http.get("Binary/n1") == b'{"resourceType": "Bundle"}'
+    assert srv.paths[:2] == ["/R4/Binary/n1", "/R4/Binary/moved"]
+    with pytest.raises(epic.FhirError, match="Refusing"):
+        http.get("Binary/n2")
 
 
 def test_persistent_timeout_skips_that_search_only(monkeypatch):
@@ -482,13 +547,6 @@ def test_persistent_timeout_skips_that_search_only(monkeypatch):
     assert any(p.startswith("Observation (laboratory):") for p in chart.problems)
     assert any("DocumentReference" in r["resourceType"] for r in chart.resources)
     assert any("skipped" in line for line in lines)
-
-
-def test_client_errors_are_not_retried(monkeypatch):
-    calls = flaky_urlopen(monkeypatch, [http_error(403)])
-    with pytest.raises(epic.FhirError, match="HTTP 403"):
-        epic.Http(BASE).get("Procedure")
-    assert len(calls) == 1
 
 
 def test_stats_breaks_down_by_origin(synced, monkeypatch, capsys):
