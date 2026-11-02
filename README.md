@@ -13,15 +13,18 @@ Claude Desktop, but then every answer's source records are sent to that provider
 [Privacy](#privacy-and-security).
 
 ```
-iPhone Health app ──export.zip──▶ mychart-mcp import ──▶ local SQLite database
-                                                              │ read-only
-                                  AI client ◀──stdio── mychart-mcp serve
+MyChart (your health system) ──Epic FHIR API──▶ mychart-mcp sync ───┐
+iPhone Health app (optional) ──export.zip────▶ mychart-mcp import ──┤
+                                                                    ▼
+                                                     local SQLite database
+                                                                    │ read-only
+                                         AI client ◀──stdio── mychart-mcp serve
 ```
 
-> **Status: early.** Apple Health exports are the only data source so far. Tested against a
-> real export from one health system plus synthetic data. Other organizations' exports may
-> have fields this doesn't handle yet; issues with `mychart-mcp stats` output (counts only,
-> never record contents) are welcome.
+> **Status: early.** Direct sync from Epic's FHIR API is the main way to get records. It's
+> tested against Epic's sandbox, one real health system, and synthetic data. Other
+> health systems may return fields this doesn't handle yet; issues with `mychart-mcp stats`
+> output (counts only, never record contents) are welcome.
 
 > **Not affiliated with** Epic Systems (MyChart is Epic's trademark) or Apple. **Not medical
 > advice:** an AI summary of your chart can be wrong or incomplete. Check anything important
@@ -30,11 +33,15 @@ iPhone Health app ──export.zip──▶ mychart-mcp import ──▶ local S
 ## Requirements
 
 - Python 3.11+ and [uv](https://docs.astral.sh/uv/)
-- An iPhone with your MyChart organization connected in the Health app (to produce the export)
+- A MyChart account at a health system that uses Epic
+- Your own free app registration at [fhir.epic.com](https://fhir.epic.com) and
+  [mkcert](https://github.com/FiloSottile/mkcert) (for the https sign-in redirect);
+  [docs/epic-setup.md](docs/epic-setup.md) walks through both
 - An MCP client that launches stdio servers: Hermes, Claude Desktop, Claude Code, …
+- Optional: an iPhone with MyChart connected in the Health app, for the Apple Health import
 
-macOS is the main target. Import and serve also work on Linux and Windows once you've copied
-the export over.
+macOS is the main target and the only tested one. Saved sign-ins and `schedule-config` are
+macOS-only.
 
 ## Install
 
@@ -44,22 +51,9 @@ uv sync
 git config core.hooksPath .githooks   # pre-commit guard against committing health data
 ```
 
-## Getting data
+## Getting your records
 
-1. iPhone: Health → Browse → Health Records → Add Account → sign in to your MyChart
-   organization. When asked how long to allow access, pick the longest option.
-2. Wait until the records appear in Health, then: profile picture → Export All Health Data.
-3. Copy `export.zip` to your computer, into a private folder (e.g. `~/HealthData`, `chmod 700`).
-
-### What the export includes
-
-Conditions, labs and vitals, medications, procedures, diagnostic
-reports, immunizations, and allergies, as FHIR resources. **Clinical note text is not
-included:** Apple's export only has each note's type, date, and author, plus a link back to
-the health system. Notes are searchable by those fields, not by their content. Getting note
-text requires a direct FHIR connection (see below).
-
-### Direct Epic sync (experimental)
+### Direct Epic sync (recommended)
 
 `mychart-mcp sync` signs in to MyChart in your browser (SMART on FHIR, read-only scopes, PKCE)
 and downloads your chart straight from your health system's Epic FHIR R4 endpoint, including
@@ -92,6 +86,28 @@ only what changed since the last sync. A full sync still runs every 30 days, or 
 Each run needs a browser sign-in, so re-run it on a reminder (after visits, or monthly).
 Unattended syncs (`--remember`, `schedule-config`) are in the code but don't work against
 Epic yet; see [keeping it current](docs/epic-setup.md#7-keeping-it-current).
+
+### Apple Health export (secondary)
+
+The import was the first data source and is handy for trying the server without an Epic app
+registration. It has no note text, so prefer direct sync once that's set up.
+
+1. iPhone: Health → Browse → Health Records → Add Account → sign in to your MyChart
+   organization. When asked how long to allow access, pick the longest option.
+2. Wait until the records appear in Health, then: profile picture → Export All Health Data.
+3. Copy `export.zip` to your computer, into a private folder (e.g. `~/HealthData`, `chmod 700`).
+4. Import it, check the counts, then delete the export:
+
+```sh
+uv run mychart-mcp import ~/HealthData/export.zip   # replaces any previous Apple Health import
+uv run mychart-mcp stats
+rm ~/HealthData/export.zip
+```
+
+The export has conditions, labs and vitals, medications, procedures, diagnostic reports,
+immunizations, and allergies, as FHIR resources. **Clinical note text is not included:**
+Apple's export only has each note's type, date, and author, plus a link back to the health
+system, so notes are searchable by those fields, not by their content.
 
 Once direct sync covers everything your Apple Health import did (compare `mychart-mcp stats`),
 drop the Apple copy so records aren't duplicated:
