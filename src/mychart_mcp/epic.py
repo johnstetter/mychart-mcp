@@ -575,7 +575,7 @@ def fetch_chart(
             reused = 0
             for i, doc in enumerate(found, 1):
                 old = stored_note(str(doc.get("id", ""))) if since else None
-                if old and _note_key(old) == _note_key(doc):
+                if old and _has_text(old) and _note_key(old) == _note_key(doc):
                     doc["content"] = old["content"]
                     reused += 1
                     continue
@@ -590,6 +590,10 @@ def fetch_chart(
         resources.extend(found)
     complete = {"Patient"} | {rtype for rtype, _ in SEARCHES} - failed
     return Chart(resources, problems, complete, since, changes_only if since else frozenset())
+
+
+def _has_text(doc: dict) -> bool:
+    return any((c.get("attachment") or {}).get("data") for c in doc.get("content") or [])
 
 
 def _note_key(doc: dict) -> str:

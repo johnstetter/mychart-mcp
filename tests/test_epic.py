@@ -288,6 +288,28 @@ def test_problems_keep_the_starting_point_for_incremental_syncs(synced):
     assert rows(path, "SELECT since FROM sync_state") == [("2026-11-03T12:00:00Z",)]
 
 
+def test_note_without_text_is_fetched_again(synced):
+    # Like Epic, the fake returns the note on every change-only search.
+    path = synced[0]
+    routes = dict(ROUTES)
+    query = "DocumentReference?patient=p1&category=clinical-note"
+    changed = epic.json.loads(epic.json.dumps(routes[query]))
+    changed["entry"][0]["resource"]["docStatus"] = "amended"
+    routes[query + "&_lastUpdated=ge2026-10-31T12%3A00%3A00Z"] = changed
+
+    class NoNotes(FakeHttp):
+        def get(self, url, accept="application/fhir+json"):
+            if url.startswith("Binary/"):
+                raise epic.FhirError("HTTP 404")
+            return super().get(url, accept)
+
+    run_sync(path, NoNotes(routes), now=LATER)  # stores the amended note without text
+    http = FakeHttp(routes)
+    run_sync(path, http, now=LATER)
+    assert "Binary/n1-html" in http.requested
+    assert "saline rinse" in server.get_record("DocumentReference", "n1")["note_text"]
+
+
 def test_missing_note_text_keeps_the_starting_point(synced):
     path = synced[0]
     routes = dict(ROUTES)
