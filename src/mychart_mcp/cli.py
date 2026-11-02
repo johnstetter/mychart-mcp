@@ -174,7 +174,8 @@ def _sync(args: argparse.Namespace) -> int:
         print("\nSkipped (usually an API not enabled for the app, or not offered by this server):")
         for problem, n in chart.problems.items():
             print(f"  {problem}" + (f" ×{n}" if n > 1 else ""))
-        print("If these were temporary (timeouts), run `mychart-mcp sync --full` later.")
+        again = "mychart-mcp sync --full" if chart.needs_full_sync else "mychart-mcp sync"
+        print(f"If these were temporary (timeouts), run `{again}` again later.")
     return 0
 
 
