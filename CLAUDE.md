@@ -31,7 +31,13 @@ Read-only MCP server over a local SQLite copy of the user's MyChart records. See
 uv run pytest            # tests
 uv run ruff check .      # lint
 uv run ruff format .     # format
+uv run --group docs mkdocs serve           # preview the docs site
+uv run --group docs mkdocs build --strict  # what CI runs
 ```
+
+`docs/` is the public site's source (`mkdocs.yml`); the README is a short landing page that
+links to it. Examples there must be synthetic and generic, like test fixtures. `TERMS.md`
+stays at the repo root (its URL is registered with Epic); `docs/terms.md` includes it.
 
 ## Layout
 

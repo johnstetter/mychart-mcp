@@ -10,7 +10,7 @@ database on your machine. Pair it with a **local model** (for example
 [Hermes](https://github.com/NousResearch/hermes-agent) running an open model through Ollama)
 and your records never leave your hardware. It also works with hosted assistants such as
 Claude Desktop, but then every answer's source records are sent to that provider. See
-[Privacy](#privacy-and-security).
+[Privacy & security](docs/privacy.md).
 
 ```
 MyChart (your health system) ──Epic FHIR API──▶ mychart-mcp sync ───┐
@@ -30,223 +30,38 @@ iPhone Health app (optional) ──export.zip────▶ mychart-mcp import 
 > advice:** an AI summary of your chart can be wrong or incomplete. Check anything important
 > with your care team.
 
-## Requirements
+## Documentation
 
-- Python 3.11+ and [uv](https://docs.astral.sh/uv/)
-- A MyChart account at a health system that uses Epic
-- Your own free app registration at [fhir.epic.com](https://fhir.epic.com) and
-  [mkcert](https://github.com/FiloSottile/mkcert) (for the https sign-in redirect);
-  [docs/epic-setup.md](docs/epic-setup.md) walks through both
-- An MCP client that launches stdio servers: Hermes, Claude Desktop, Claude Code, …
-- Optional: an iPhone with MyChart connected in the Health app, for the Apple Health import
+**Website: <https://johnstetter.github.io/mychart-mcp/>** (built from [`docs/`](docs/)):
 
-macOS is the main target and the only tested one. Saved sign-ins and `schedule-config` are
-macOS-only.
+- [How it works](docs/how-it-works.md): download, store, ask, in plain words and in detail
+- [Getting started](docs/getting-started.md): requirements, install, first sync, several
+  health systems, Apple Health instead
+- [Epic setup guide](docs/epic-setup.md): registering your app, sandbox, production,
+  certificates, keeping records current, troubleshooting
+- [Connect an assistant](docs/connect.md): Hermes, Claude Desktop, Claude Code
+- [Privacy & security](docs/privacy.md) and [Reference](docs/reference.md): commands, options,
+  database paths, assistant tools
+- [FAQ](docs/faq.md), and the [terms of use and privacy statement](TERMS.md) given to Epic
 
-## Install
+## Quick start
 
 ```sh
-git clone <this repo> && cd mychart-mcp
+git clone https://github.com/johnstetter/mychart-mcp.git && cd mychart-mcp
 uv sync
 git config core.hooksPath .githooks   # pre-commit guard against committing health data
-```
 
-## Getting your records
-
-### Direct Epic sync (recommended)
-
-`mychart-mcp sync` signs in to MyChart in your browser (SMART on FHIR, read-only scopes, PKCE)
-and downloads your chart straight from your health system's Epic FHIR R4 endpoint, including
-clinical note text. The access token is held in memory for that run only and never saved.
-This is the only command that uses the network; `serve` never does.
-
-You need a patient-app client ID from [fhir.epic.com](https://fhir.epic.com), registered with
-`http://127.0.0.1:8765/callback` (sandbox) and/or `https://127.0.0.1:8765/callback`
-(production, which Epic requires to be https) as redirect URIs. **[docs/epic-setup.md](docs/epic-setup.md)
-walks through the whole setup**: registering the app (every form field and API), sandbox
-testing, going to production, finding your health system's endpoint, the certificate, and
-troubleshooting.
-
-```sh
-# Try it against Epic's sandbox first, in a scratch database
-MYCHART_MCP_DB=/tmp/sandbox.db uv run mychart-mcp sync --sandbox --client-id <non-production id>
-
-# Your health system (find its R4 base URL in Epic's open.epic.com endpoint list)
-brew install mkcert && mkcert -install && mkcert 127.0.0.1   # once, for the https redirect
+# After registering an app at fhir.epic.com (see the Epic setup guide):
 uv run mychart-mcp sync --fhir-base <R4 base URL> --client-id <production id> \
     --redirect-uri https://127.0.0.1:8765/callback --cert 127.0.0.1.pem --key 127.0.0.1-key.pem
-```
-
-Flags can also come from `MYCHART_MCP_FHIR_BASE`, `MYCHART_MCP_CLIENT_ID`,
-`MYCHART_MCP_REDIRECT_URI`, `MYCHART_MCP_CERT` and `MYCHART_MCP_KEY`. Re-runs download
-only what changed since the last sync. A full sync still runs every 30 days, or with
-`--full`, to drop records deleted upstream
-([details](docs/epic-setup.md#7-keeping-it-current)).
-
-Each run needs a browser sign-in, so re-run it on a reminder (after visits, or monthly).
-Unattended syncs (`--remember`, `schedule-config`) are in the code but don't work against
-Epic yet; see [keeping it current](docs/epic-setup.md#7-keeping-it-current).
-
-### Apple Health export (secondary)
-
-The import was the first data source and is handy for trying the server without an Epic app
-registration. It has no note text, so prefer direct sync once that's set up.
-
-1. iPhone: Health → Browse → Health Records → Add Account → sign in to your MyChart
-   organization. When asked how long to allow access, pick the longest option.
-2. Wait until the records appear in Health, then: profile picture → Export All Health Data.
-3. Copy `export.zip` to your computer, into a private folder (e.g. `~/HealthData`, `chmod 700`).
-4. Import it, check the counts, then delete the export:
-
-```sh
-uv run mychart-mcp import ~/HealthData/export.zip   # replaces any previous Apple Health import
 uv run mychart-mcp stats
-rm ~/HealthData/export.zip
+uv run mychart-mcp client-config hermes   # or claude, or claude-code --dir ~/HealthChat
 ```
 
-The export has conditions, labs and vitals, medications, procedures, diagnostic reports,
-immunizations, and allergies, as FHIR resources. **Clinical note text is not included:**
-Apple's export only has each note's type, date, and author, plus a link back to the health
-system, so notes are searchable by those fields, not by their content.
-
-Once direct sync covers everything your Apple Health import did (compare `mychart-mcp stats`),
-drop the Apple copy so records aren't duplicated:
-
-```sh
-uv run mychart-mcp forget apple_health   # asks first; --source limits it to one health system
-```
-
-## Usage
-
-```sh
-uv run mychart-mcp sync     # with your flags or MYCHART_MCP_* settings; changes only after the first run
-uv run mychart-mcp stats    # counts and date ranges per record type, by origin and source
-```
-
-| Command | What it does |
-|---|---|
-| `sync` | Download from an Epic FHIR server. The first run is full; later ones fetch changes |
-| `sync --full` | Download everything again, dropping records deleted upstream (automatic every 30 days) |
-| `import <export.zip>` | Import an Apple Health export, replacing the previous one |
-| `stats` | Counts and date ranges per record type, broken down by origin and source |
-| `forget apple_health\|fhir [--source NAME]` | Delete the records from one origin, or one health system; asks first |
-| `client-config claude\|claude-code\|hermes` | Set up an AI client (below) |
-| `serve` | The MCP server itself; your AI client starts it |
-| `logout`, `schedule-config` | Saved sign-ins and scheduled syncs (experimental, [not working yet](docs/epic-setup.md#saved-sign-ins-experimental-not-working-yet)) |
-
-### More than one health system
-
-Run `sync` once per health system, each with its own `--fhir-base`; the same production
-client ID works at every health system Epic delivered your app to. Each keeps its own
-restart point. Records are labelled with a
-source name taken from the chart (the managing organization), or with `--name`. Pick the
-name once: syncing under a new name makes a fresh full copy, and the old one stays until
-`mychart-mcp forget fhir --source "<old name>"`.
-
-The database lives at:
-
-| OS | Default path |
-|---|---|
-| macOS | `~/Library/Application Support/mychart-mcp/health.db` |
-| Linux | `$XDG_DATA_HOME/mychart-mcp/health.db` (default `~/.local/share/…`) |
-| Windows | `%LOCALAPPDATA%\mychart-mcp\health.db` |
-
-Set `MYCHART_MCP_DB` to use a different path.
-
-## Connecting a client
-
-Desktop apps launch MCP servers with a minimal `PATH` and an arbitrary working directory, so
-point them at the absolute path of this project's executable. Generate the snippet:
-
-```sh
-uv run mychart-mcp client-config hermes                         # Hermes
-uv run mychart-mcp client-config claude                         # Claude Desktop
-uv run mychart-mcp client-config claude-code --dir ~/HealthChat # Claude Code (creates the folder)
-```
-
-| Client | Config file | Then |
-|---|---|---|
-| Hermes | a dedicated profile's `config.yaml` (add under `mcp_servers:`; see below) | `hermes -p health` |
-| Claude Desktop | `claude_desktop_config.json` (merge into `mcpServers`) | Quit and reopen Claude |
-| Claude Code | `.mcp.json` + `.claude/settings.json` in the folder you pass | Run `claude` in that folder |
-
-Set `MYCHART_MCP_DB` before running `client-config` to bake a non-default path into the
-snippet. After moving the repo, run `uv sync` and regenerate the config.
-
-### Hermes: use a dedicated profile
-
-Give your records their own [Hermes profile](https://hermes-agent.nousresearch.com/docs/reference/cli-commands)
-instead of adding the server to your everyday one. A profile is a separate Hermes instance
-with its own config, tools, memories and session history, so health details don't end up in
-the memory your other chats draw on, and the tools that can send data out stay off.
-
-```sh
-hermes profile create health        # no --clone: start without your usual memories and skills
-hermes -p health tools              # turn off web, browser, terminal and messaging toolsets
-uv run mychart-mcp client-config hermes   # paste under mcp_servers: in the profile's config.yaml
-hermes -p health                    # ask about your records here
-```
-
-- The profile's files live under `~/.hermes/profiles/health/` (`hermes -p health dump`
-  shows the path).
-- Don't make it the default with `hermes profile use`, and don't start a messaging gateway
-  for it; ask from the terminal on this machine.
-- Check `hermes -p health tools --summary` after Hermes updates, which can add toolsets.
-- Pair it with a local model (see below) so nothing leaves the machine.
-
-### What it's for
-
-The server answers questions about your records; the assistant does the rest. For example,
-ask it to pull your last three A1c results and the medications started since, then have the
-agent draft a short, clear message to your care team from that. The server provides the
-facts with dates and sources. Drafting is the model's job, and sending stays with you.
-
-### Tools
-
-| Tool | Purpose |
-|---|---|
-| `data_summary` | Record counts, date ranges, sources, and when each export or health system was last imported |
-| `search_records` | Full-text search over names, codes (ICD-10, SNOMED, LOINC, …) and descriptive text |
-| `condition_timeline` | Date-ordered evidence for a condition across all record types |
-| `list_records` | Records of one type, newest first |
-| `lab_results` | Lab values oldest-first, for trends |
-| `get_record` | Full detail of one record (and decoded note text, when a source provides it) |
-
-## Privacy and security
-
-**Where your records go depends on the model, not this server.** Tool results become part of
-the conversation, and the conversation goes wherever the model runs.
-
-- **Local model (recommended):** Hermes, or any MCP client, with a model served on your own
-  machine (Ollama, LM Studio, …). Nothing leaves your hardware.
-- **Hosted model (Claude, GPT, …):** the records each answer relies on are sent to that
-  provider and stored with your chat history under their data policy. Check whether your
-  plan allows chats to be used for training. HIPAA doesn't cover data you hold yourself or
-  share with an AI provider.
-
-The server itself:
-
-- **Read-only, three ways:** no write tools; the database is opened with `mode=ro` and
-  `query_only`; tools carry `readOnlyHint` annotations.
-- **Local storage:** the database is created `0600` in a `0700` directory outside the repo.
-  `.gitignore` and the pre-commit hook keep databases and exports out of git. Use full-disk
-  encryption.
-- **Untrusted text:** record text could contain instructions aimed at the model (prompt
-  injection). Don't give the same chat tools that can send data out (email, messaging, web
-  requests) while your records are in it:
-  - **Claude Code:** ask about your records from the folder made by
-    `client-config claude-code`, which denies web and shell tools. Add any other outbound
-    connectors (email, chat, …) to the deny list in that folder's
-    `.claude/settings.local.json`. This repo itself is for development: it allows web
-    access and denies the `mychart` tools, so the two never meet in one session.
-  - **Claude Desktop:** turn off other connectors in the chat's tools menu.
-  - **Hermes:** use a dedicated profile with web, browser, terminal and messaging toolsets
-    off ([above](#hermes-use-a-dedicated-profile)). Its memories and session history stay
-    under `~/.hermes/profiles/<name>/`, apart from your other chats.
-- **Revoking:** remove mychart-mcp (and Apple Health, if you used it) under MyChart → Linked
-  Apps, run `mychart-mcp logout` if you saved a sign-in, and delete the database.
-
-See [TERMS.md](TERMS.md) for the terms of use and privacy statement shown to Epic.
+`sync` is the only command that uses the network; the server your assistant talks to only
+reads the local database. With a local model nothing leaves your machine; with a hosted
+assistant the records behind each answer go to that provider
+([details](docs/privacy.md)).
 
 ## Project layout
 
@@ -259,6 +74,7 @@ src/mychart_mcp/
   fhir.py       field extraction from FHIR R4 and DSTU2 resources
   db.py         schema and read-write / read-only connections
   server.py     MCP tools
+docs/           the documentation site's pages (mkdocs.yml)
 tests/          synthetic data only: a fake FHIR server, saved sign-ins, an Apple Health export
 .githooks/      pre-commit hook that blocks health-data files
 ```
@@ -268,9 +84,10 @@ tests/          synthetic data only: a fake FHIR server, saved sign-ins, an Appl
 ```sh
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
+uv run --group docs mkdocs serve      # preview the docs site at http://127.0.0.1:8000
 ```
 
-CI runs both on Python 3.11 to 3.13. Tests use synthetic data only; never put real health
+CI runs the tests and ruff on Python 3.11 to 3.13, and `mkdocs build --strict`. Tests use synthetic data only; never put real health
 data in `tests/`. The pre-commit hook rejects databases, zips, Apple Health exports, and
 FHIR/C-CDA files outside `tests/`.
 

@@ -49,7 +49,7 @@ encryption is recommended.
 
 mychart-mcp does not provide medical advice. Summaries produced by an AI assistant can be
 wrong or incomplete; confirm anything important with your care team. The software is
-provided "as is", without warranty of any kind, as described in the [LICENSE](LICENSE).
+provided "as is", without warranty of any kind, as described in the [LICENSE](https://github.com/johnstetter/mychart-mcp/blob/main/LICENSE).
 
 ## Changes and contact
 

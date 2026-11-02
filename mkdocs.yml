@@ -1,0 +1,65 @@
+site_name: mychart-mcp
+site_description: Ask an AI assistant about your own MyChart health records, kept on your own computer.
+site_url: https://johnstetter.github.io/mychart-mcp/
+repo_url: https://github.com/johnstetter/mychart-mcp
+repo_name: johnstetter/mychart-mcp
+edit_uri: edit/main/docs/
+copyright: MIT License · Not affiliated with Epic Systems or Apple · Not medical advice
+
+theme:
+  name: material
+  font: false  # system fonts; no requests to Google Fonts
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.top
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: white
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+extra_css:
+  - stylesheets/extra.css
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+
+nav:
+  - Home: index.md
+  - How it works: how-it-works.md
+  - Getting started: getting-started.md
+  - Epic setup guide: epic-setup.md
+  - Connect an assistant: connect.md
+  - Privacy & security: privacy.md
+  - Reference: reference.md
+  - FAQ: faq.md
+  - Terms & privacy statement: terms.md
+
+validation:
+  unrecognized_links: warn
+  anchors: warn
