@@ -250,7 +250,7 @@ def _stats(args: argparse.Namespace) -> int:
         print(f"{row['resource_type']:<22} {row['n']:>6}  {span}")
     print()
     for imp in summary["imports"]:
-        print(f"Imported via {imp['origin']} at {imp['imported_at']}")
+        print(f"Imported via {imp['origin']} ({imp['source_file']}) at {imp['imported_at']}")
     if summary["sources"]:
         print("Sources: " + ", ".join(summary["sources"]))
 

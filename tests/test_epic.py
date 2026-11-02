@@ -676,6 +676,7 @@ def test_stats_breaks_down_by_origin(synced, monkeypatch, capsys):
     assert run_cli(monkeypatch, "stats") == 0
     out = capsys.readouterr().out
     assert "fhir — Example Health" in out
+    assert f"Imported via fhir ({BASE})" in out
 
 
 def test_claude_code_folder_denies_outbound_tools(tmp_path, monkeypatch):
