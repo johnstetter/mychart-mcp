@@ -116,7 +116,7 @@ change.
 - **Intended Purposes:** Individuals' Access to their EHI. **Intended Users:**
   Individual/Caregiver.
 - **Terms and Conditions Secure URL:** must be a public https page, **without a `#`
-  fragment** (the form rejects it). This repo uses [`TERMS.md`](../TERMS.md).
+  fragment** (the form rejects it). This repo uses [`TERMS.md`](https://github.com/johnstetter/mychart-mcp/blob/main/TERMS.md).
 - **Data Use Questionnaire:** answer truthfully. For this design: stored only on the
   user's device, no developer servers, never sold or shared, deletable at any time, and data
   goes to an AI provider only if the user connects a hosted assistant.
