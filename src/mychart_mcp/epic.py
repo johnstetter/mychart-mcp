@@ -28,6 +28,9 @@ FHIR_ORIGIN = "fhir"
 EPIC_SANDBOX = "https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4"
 DEFAULT_REDIRECT = "http://127.0.0.1:8765/callback"
 SCOPES = "openid fhirUser launch/patient patient/*.read"
+# Asks the patient how long to allow access; Epic only lets a sign-in with this scope register
+# a device key (see register_client).
+OFFLINE_SCOPE = "offline_access"
 
 # Epic requires a category on Condition and Observation searches.
 SEARCHES: list[tuple[str, dict[str, str]]] = [
@@ -125,12 +128,13 @@ def authorize_url(
     fhir_base: str,
     state: str,
     challenge: str,
+    offline: bool = False,
 ) -> str:
     params = {
         "response_type": "code",
         "client_id": client_id,
         "redirect_uri": redirect_uri,
-        "scope": SCOPES,
+        "scope": f"{SCOPES} {OFFLINE_SCOPE}" if offline else SCOPES,
         "state": state,
         "aud": fhir_base,
         "code_challenge": challenge,
@@ -258,6 +262,7 @@ class Login:
     access_token: str
     patient_id: str
     smart: dict  # the server's .well-known/smart-configuration
+    scope: str = ""  # what the server granted, which can be less than requested
 
 
 def login(
@@ -268,8 +273,9 @@ def login(
     cert: str | None = None,
     key: str | None = None,
     open_url: Callable[[str], object],
+    offline: bool = False,
 ) -> Login:
-    """Run the browser sign-in. Nothing is saved."""
+    """Run the browser sign-in. Nothing is saved. `offline` requests persistent access."""
     smart = Http(fhir_base).get_json(".well-known/smart-configuration", "application/json")
     verifier, challenge = pkce_pair()
     state = secrets.token_urlsafe(16)
@@ -282,6 +288,7 @@ def login(
             fhir_base=fhir_base,
             state=state,
             challenge=challenge,
+            offline=offline,
         )
     )
     code = listener.wait(state)
@@ -294,7 +301,7 @@ def login(
     )
     if not token.get("access_token") or not token.get("patient"):
         raise FhirError("The server didn't return an access token and patient ID.")
-    return Login(token["access_token"], token["patient"], smart)
+    return Login(token["access_token"], token["patient"], smart, token.get("scope", ""))
 
 
 # --- Saved sign-in (Epic dynamic client registration) ------------------------------------
@@ -316,6 +323,11 @@ def _int_b64url(n: int) -> str:
 
 def register_client(login: Login, software_id: str) -> dict:
     """Register this device as a dynamic client. Returns the credential to save."""
+    if login.scope and OFFLINE_SCOPE not in login.scope.split():
+        raise FhirError(
+            f"Epic didn't grant {OFFLINE_SCOPE} (granted: {login.scope}). "
+            "Choose a longer access period on the consent screen."
+        )
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -325,7 +337,6 @@ def register_client(login: Login, software_id: str) -> dict:
     jwk = {
         "kty": "RSA",
         "kid": kid,
-        "alg": "RS384",
         "e": _int_b64url(numbers.e),
         "n": _int_b64url(numbers.n),
     }

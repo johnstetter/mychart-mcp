@@ -157,6 +157,21 @@ def test_pkce_and_authorize_url():
     assert params["aud"] == BASE
     assert params["code_challenge_method"] == "S256"
     assert "write" not in params["scope"]
+    assert "offline_access" not in params["scope"]
+
+    offline = epic.authorize_url(
+        {"authorization_endpoint": "https://auth.example.test/authorize"},
+        client_id="cid",
+        redirect_uri=epic.DEFAULT_REDIRECT,
+        fhir_base=BASE,
+        state="s",
+        challenge=challenge,
+        offline=True,
+    )
+    assert (
+        "offline_access"
+        in dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(offline).query))["scope"]
+    )
 
 
 def test_callback_ignores_wrong_state():

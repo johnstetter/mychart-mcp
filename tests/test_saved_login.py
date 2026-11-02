@@ -54,6 +54,13 @@ def test_registration_sends_public_key_only(credential, posts):
     assert credential["patient"] == "p1"
 
 
+def test_registration_needs_offline_access(posts):
+    login = epic.Login("initial", "p1", SMART, "openid patient/*.read")
+    with pytest.raises(epic.FhirError, match="didn't grant offline_access"):
+        epic.register_client(login, "app-client-id")
+    assert posts == []
+
+
 def test_assertion_is_signed_with_the_saved_key(credential):
     jwt = epic.client_assertion(credential, now=1_000_000)
     header, claims, signature = jwt.split(".")

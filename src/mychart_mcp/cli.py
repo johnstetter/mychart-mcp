@@ -92,6 +92,7 @@ def _sync_sign_in(args: argparse.Namespace, fhir_base: str) -> tuple[str, str] |
         cert=args.cert,
         key=args.key,
         open_url=open_url,
+        offline=args.remember,
     )
     if args.remember:
         try:
