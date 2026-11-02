@@ -16,6 +16,9 @@ mychart-mcp = "mychart_mcp.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]
+docs = [
+    "mkdocs-material>=9.5,<10",
+]
 
 [build-system]
 requires = ["hatchling"]
