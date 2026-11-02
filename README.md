@@ -205,7 +205,7 @@ facts with dates and sources. Drafting is the model's job, and sending stays wit
 
 | Tool | Purpose |
 |---|---|
-| `data_summary` | Record counts, date ranges, sources, last import |
+| `data_summary` | Record counts, date ranges, sources, and when each export or health system was last imported |
 | `search_records` | Full-text search over names, codes (ICD-10, SNOMED, LOINC, …) and descriptive text |
 | `condition_timeline` | Date-ordered evidence for a condition across all record types |
 | `list_records` | Records of one type, newest first |
