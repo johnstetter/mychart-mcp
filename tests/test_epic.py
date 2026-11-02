@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import sqlite3
 import threading
 import urllib.parse
 import urllib.request
@@ -508,6 +509,51 @@ def test_forget_removes_only_that_origin(synced, monkeypatch):
     assert rows(path, "SELECT * FROM sync_state") == []
 
 
+OTHER_BASE = "https://fhir.other.test/api/FHIR/R4"
+
+
+def sync_other(path):
+    """A second health system: the same synthetic chart under another server and name."""
+    chart, _ = run_sync(path, FakeHttp(), full=True)
+    conn = connect_rw(path)
+    try:
+        epic.store(conn, "Other Health", OTHER_BASE, chart, NOW)
+    finally:
+        conn.close()
+
+
+def test_each_health_system_keeps_its_own_import_row(synced, monkeypatch):
+    path = synced[0]
+    sync_other(path)
+    imports = {i["source_file"] for i in server.data_summary()["imports"]}
+    assert imports == {BASE, OTHER_BASE}
+
+    assert run_cli(monkeypatch, "forget", "fhir", "--source", "Other Health", "--yes") == 0
+    assert rows(path, "SELECT source_file FROM import_meta") == [(BASE,)]
+    assert rows(path, "SELECT fhir_base FROM sync_state") == [(BASE,)]
+
+
+def test_old_import_meta_is_rekeyed(tmp_path):
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE import_meta (origin TEXT PRIMARY KEY, imported_at TEXT NOT NULL, "
+        "source_file TEXT, counts TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO import_meta VALUES ('fhir', '2026-10-01T00:00:00+00:00', ?, '{}')", (BASE,)
+    )
+    conn.commit()
+    conn.close()
+
+    connect_rw(path).close()
+    conn = connect_rw(path)  # migrates once; a second open is a no-op
+    pk = [r[1] for r in conn.execute("PRAGMA table_info(import_meta)") if r[5]]
+    conn.close()
+    assert sorted(pk) == ["origin", "source_file"]
+    assert rows(path, "SELECT origin, source_file FROM import_meta") == [("fhir", BASE)]
+
+
 def test_forget_asks_first(synced, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: "n")
     assert run_cli(monkeypatch, "forget", "fhir") == 1
@@ -630,6 +676,7 @@ def test_stats_breaks_down_by_origin(synced, monkeypatch, capsys):
     assert run_cli(monkeypatch, "stats") == 0
     out = capsys.readouterr().out
     assert "fhir — Example Health" in out
+    assert f"Imported via fhir ({BASE})" in out
 
 
 def test_claude_code_folder_denies_outbound_tools(tmp_path, monkeypatch):

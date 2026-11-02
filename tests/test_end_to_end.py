@@ -160,6 +160,16 @@ def test_reimport_replaces_rather_than_duplicates(db, export_zip):
     assert n == fts == 8
 
 
+def test_reimport_under_another_name_keeps_one_import_row(db, export_zip):
+    path, _ = db
+    renamed = export_zip.rename(export_zip.with_name("export-2.zip"))
+    conn = connect_rw(path)
+    import_apple_health(conn, renamed)
+    meta = conn.execute("SELECT origin, source_file FROM import_meta").fetchall()
+    conn.close()
+    assert meta == [("apple_health", "export-2.zip")]
+
+
 def test_source_attribution(db):
     assert server.data_summary()["sources"] == ["Test Health"]
 
