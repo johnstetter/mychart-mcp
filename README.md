@@ -119,10 +119,29 @@ uv run mychart-mcp forget apple_health   # asks first; --source limits it to one
 ## Usage
 
 ```sh
-uv run mychart-mcp import ~/HealthData/export.zip   # replaces any previous Apple Health import
-uv run mychart-mcp stats                             # counts and date ranges per record type
-rm ~/HealthData/export.zip                           # once the import looks right
+uv run mychart-mcp sync     # with your flags or MYCHART_MCP_* settings; changes only after the first run
+uv run mychart-mcp stats    # counts and date ranges per record type, by origin and source
 ```
+
+| Command | What it does |
+|---|---|
+| `sync` | Download from an Epic FHIR server. The first run is full; later ones fetch changes |
+| `sync --full` | Download everything again, dropping records deleted upstream (automatic every 30 days) |
+| `import <export.zip>` | Import an Apple Health export, replacing the previous one |
+| `stats` | Counts and date ranges per record type, broken down by origin and source |
+| `forget apple_health\|fhir [--source NAME]` | Delete the records from one origin, or one health system; asks first |
+| `client-config claude\|claude-code\|hermes` | Set up an AI client (below) |
+| `serve` | The MCP server itself; your AI client starts it |
+| `logout`, `schedule-config` | Saved sign-ins and scheduled syncs (experimental, [not working yet](docs/epic-setup.md#saved-sign-ins-experimental-not-working-yet)) |
+
+### More than one health system
+
+Run `sync` once per health system, each with its own `--fhir-base`; the same production
+client ID works at every health system Epic delivered your app to. Each keeps its own
+restart point. Records are labelled with a
+source name taken from the chart (the managing organization), or with `--name`. Pick the
+name once: syncing under a new name makes a fresh full copy, and the old one stays until
+`mychart-mcp forget fhir --source "<old name>"`.
 
 The database lives at:
 
@@ -224,8 +243,8 @@ The server itself:
   - **Hermes:** use a dedicated profile with web, browser, terminal and messaging toolsets
     off ([above](#hermes-use-a-dedicated-profile)). Its memories and session history stay
     under `~/.hermes/profiles/<name>/`, apart from your other chats.
-- **Revoking:** remove Apple Health and/or mychart-mcp under MyChart → Linked Apps, and
-  delete the database.
+- **Revoking:** remove mychart-mcp (and Apple Health, if you used it) under MyChart → Linked
+  Apps, run `mychart-mcp logout` if you saved a sign-in, and delete the database.
 
 See [TERMS.md](TERMS.md) for the terms of use and privacy statement shown to Epic.
 
