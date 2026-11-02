@@ -143,6 +143,10 @@ def authorize_url(
     return f"{smart_config['authorization_endpoint']}?{urllib.parse.urlencode(params)}"
 
 
+class _ReusableTCPServer(TCPServer):
+    allow_reuse_address = True
+
+
 class CallbackListener:
     """One-shot loopback HTTP(S) server that receives the OAuth redirect."""
 
@@ -174,7 +178,9 @@ class CallbackListener:
         if target.port is None:
             raise FhirError(f"Redirect URI needs an explicit port: {redirect_uri}")
         # Not HTTPServer: its reverse-DNS lookup of the bind address can hang for ~30s.
-        self.server = TCPServer((target.hostname, target.port), Handler)
+        # Reuse the address like HTTPServer does, so a re-run right after the last one can bind
+        # while the old connection is in TIME_WAIT.
+        self.server = _ReusableTCPServer((target.hostname, target.port), Handler)
         self.server.handle_error = lambda *a: None  # type: ignore[method-assign]
         if target.scheme == "https":
             if not (cert and key):

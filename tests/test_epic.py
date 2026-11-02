@@ -187,6 +187,16 @@ def test_callback_ignores_wrong_state():
     assert result["code"] == "c-good"
 
 
+def test_listener_port_can_be_reused_right_away():
+    first = epic.CallbackListener("http://127.0.0.1:0/callback")
+    port = first.port
+    thread = threading.Thread(target=lambda: first.wait("s", 10))
+    thread.start()
+    urllib.request.urlopen(f"http://127.0.0.1:{port}/callback?code=c&state=s", timeout=5).read()
+    thread.join(10)
+    epic.CallbackListener(f"http://127.0.0.1:{port}/callback").server.server_close()
+
+
 def test_redirect_must_be_loopback():
     with pytest.raises(epic.FhirError, match="loopback"):
         epic.CallbackListener("http://example.test:8765/callback")
