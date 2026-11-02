@@ -30,7 +30,7 @@ local SQLite database  ◀── read-only ── mychart-mcp serve ── AI cl
 - The **access token** is held in memory for one run and is never written anywhere. The
   HTTP client refuses to send it to any host other than the FHIR server you signed in to.
 - **Everything is downloaded before anything is written.** If a run fails, your database
-  is untouched. A successful run replaces that health system's previously synced rows.
+  is untouched. A successful run updates that health system's previously synced rows.
 - `src/mychart_mcp/epic.py` is the **only module that makes network calls**. The MCP server
   (`server.py`) never imports it.
 
@@ -172,13 +172,39 @@ avoid repeating the flags, set `MYCHART_MCP_FHIR_BASE`, `MYCHART_MCP_CLIENT_ID`,
 Run it in your own terminal, not through an AI assistant's shell tool, so your records'
 contents stay out of the assistant's context. The summary contains counts only.
 
-Re-running replaces that health system's synced records, and every run opens the browser.
+Every run opens the browser. The first run downloads everything; later ones download only
+what changed (next section).
 
 ## 7. Keeping it current
 
 Re-run step 6 when you want fresh records, for example after a visit or when new results
 post. A recurring reminder works well (Reminders or your calendar, monthly or after
 appointments).
+
+Re-runs are **incremental**: the output starts with "Downloading changes since <date>".
+
+- **What's fetched incrementally:** Observation (labs, vitals), DiagnosticReport,
+  DocumentReference (notes) and Encounter are searched with `_lastUpdated=ge<last sync>`,
+  so only new or changed records come back. Epic leaves `meta.lastUpdated` off vitals and
+  clinical notes, so those return every time. For each note, the sync compares it with the
+  stored copy and reuses the stored text when nothing changed. Note text is where most of a
+  full sync's time goes, since each note is a separate request. A full sync always refetches
+  it.
+- **What's always refetched in full:** Condition, MedicationRequest, AllergyIntolerance,
+  Immunization and Procedure. Epic can filter these only by clinical date, which would miss
+  late corrections, and they're small.
+- **Full syncs:** a change-only search can't report records deleted upstream, so a full
+  sync still runs:
+  - on the first sync
+  - every 30 days
+  - after `forget fhir`
+  - when the patient, source name or list of searches changes
+  - whenever you pass `--full`
+- **Restart point:** each sync records where the next one starts in the `sync_state` table
+  (one row per FHIR server). That point is the run's start time minus a day of overlap;
+  overlapping records are simply updated again.
+- **If a change-only search or a note's text fails:** the restart point stays put, so the
+  next run asks for those changes again.
 
 ### Saved sign-ins (experimental, not working yet)
 
@@ -246,8 +272,11 @@ Keep any Apple Health source you haven't set up for direct sync.
   inline base64 `attachment.data`. `fhir.extract` then indexes it like any inline note.
 - `register_client`, `client_assertion`, `saved_login`: dynamic client registration and
   JWT-bearer token requests for saved sign-ins. `keychain.py` stores the credential.
-- `fetch_chart` → `store`: download everything, then replace the `fhir` origin's rows for
-  that source in one transaction.
+- `sync_since` → `fetch_chart` → `store`: decide full vs incremental from `sync_state`,
+  download (adding `_lastUpdated` for `INCREMENTAL_TYPES`), then write in one transaction.
+  A full sync replaces each type it fetched completely. An incremental one upserts changed
+  records (`importers.replace_resource`) and replaces the always-full types. Types whose
+  search failed keep their rows.
 
 `tests/test_epic.py` exercises all of this against a fake in-memory FHIR server. The only
 real socket it opens is a loopback one for the redirect listener.

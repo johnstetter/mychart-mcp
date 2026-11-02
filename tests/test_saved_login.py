@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import shlex
+from collections import Counter
 
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
@@ -155,9 +156,14 @@ def test_unattended_with_saved_login_syncs(fake_security, credential, monkeypatc
     keychain.save(BASE, credential)
     monkeypatch.setattr(epic, "login", lambda *a, **k: pytest.fail("opened browser"))
     monkeypatch.setattr(
+        epic, "fetch_patient", lambda http, pid: {"resourceType": "Patient", "id": pid}
+    )
+    monkeypatch.setattr(
         epic,
         "fetch_chart",
-        lambda http, pid, progress: ([{"resourceType": "Patient", "id": pid}], {}),
+        lambda http, patient, since, progress, stored_note: epic.Chart(
+            [patient], Counter(), {"Patient"}, since
+        ),
     )
     assert run_cli(monkeypatch, "sync", "--unattended", "--fhir-base", BASE) == 0
 

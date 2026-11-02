@@ -18,11 +18,11 @@ import urllib.request
 from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 from socketserver import TCPServer
 
-from .importers import delete_records, insert_resource
+from .importers import delete_records, insert_resource, replace_resource
 
 FHIR_ORIGIN = "fhir"
 EPIC_SANDBOX = "https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4"
@@ -48,6 +48,14 @@ SEARCHES: list[tuple[str, dict[str, str]]] = [
     ("Immunization", {}),
     ("Procedure", {}),
 ]
+
+# Types Epic can search by _lastUpdated. The rest have only clinical-date filters, which miss
+# late corrections, so every sync refetches them in full (they're small).
+INCREMENTAL_TYPES = frozenset({"Observation", "DiagnosticReport", "DocumentReference", "Encounter"})
+# A _lastUpdated search can't report deletions; a periodic full sync drops them.
+FULL_SYNC_EVERY = timedelta(days=30)
+# Ask for a day more than strictly needed, for clock skew and server indexing lag.
+OVERLAP = timedelta(days=1)
 
 # Preferred order when a note is offered in several formats.
 NOTE_TYPES = ("text/html", "text/plain", "text/rtf")
@@ -452,43 +460,145 @@ def inline_note(http: Http, doc: dict) -> bool:
     return False
 
 
+@dataclass
+class Chart:
+    resources: list[dict]
+    problems: Counter
+    complete: set[str]  # types whose every search succeeded
+    since: str | None  # None for a full sync
+
+    @property
+    def missed_changes(self) -> bool:
+        """Whether a change-only search or a note's text failed (others refetch in full)."""
+        return bool(INCREMENTAL_TYPES - self.complete) or "note text unavailable" in self.problems
+
+
+def fetch_patient(http: Http, patient_id: str) -> dict:
+    return http.get_json(f"Patient/{urllib.parse.quote(patient_id)}")
+
+
 def fetch_chart(
-    http: Http, patient_id: str, progress: Callable[[str], object] = lambda _: None
-) -> tuple[list[dict], Counter]:
-    """Download everything the app is allowed to read. Returns (resources, problems)."""
+    http: Http,
+    patient: dict,
+    since: str | None = None,
+    progress: Callable[[str], object] = lambda _: None,
+    stored_note: Callable[[str], dict | None] = lambda _: None,
+) -> Chart:
+    """Download what the app may read; with `since`, only changes for INCREMENTAL_TYPES.
+
+    Epic returns notes without meta.lastUpdated on every incremental search, so with `since`
+    a note whose stored copy (`stored_note(id)`) matches reuses that copy's text.
+    """
     problems: Counter = Counter()
-    resources = [http.get_json(f"Patient/{urllib.parse.quote(patient_id)}")]
+    resources = [patient]
+    failed: set[str] = set()
     for rtype, params in SEARCHES:
         label = f"{rtype} ({params['category']})" if params else rtype
+        query = {"patient": patient["id"], **params}
+        if since and rtype in INCREMENTAL_TYPES:
+            query["_lastUpdated"] = f"ge{since}"
         try:
-            found = list(search(http, rtype, {"patient": patient_id, **params}))
+            found = list(search(http, rtype, query))
         except FhirError as e:
             problems[f"{label}: {e}"] += 1
+            failed.add(rtype)
             progress(f"  {label:<38} skipped")
             continue
         progress(f"  {label:<38} {len(found)}")
         if rtype == "DocumentReference":
+            reused = 0
             for i, doc in enumerate(found, 1):
+                old = stored_note(str(doc.get("id", ""))) if since else None
+                if old and _note_key(old) == _note_key(doc):
+                    doc["content"] = old["content"]
+                    reused += 1
+                    continue
                 try:
                     inline_note(http, doc)
                 except FhirError:
                     problems["note text unavailable"] += 1
                 if i % max(25, len(found) // 10) == 0 or i == len(found):
                     progress(f"    note text {i}/{len(found)}")
+            if reused:
+                progress(f"    note text unchanged for {reused}, reused")
         resources.extend(found)
-    return resources, problems
+    complete = {"Patient"} | {rtype for rtype, _ in SEARCHES} - failed
+    return Chart(resources, problems, complete, since)
 
 
-def store(conn: sqlite3.Connection, source: str, fhir_base: str, resources: list[dict]) -> Counter:
-    """Replace this source's FHIR rows with `resources`."""
+def _note_key(doc: dict) -> str:
+    """Everything about a note except its fetched text; equal keys mean the same note."""
+    rest = {k: v for k, v in doc.items() if k != "content"}
+    urls = sorted((c.get("attachment") or {}).get("url") or "" for c in doc.get("content") or [])
+    return json.dumps([rest, urls], sort_keys=True)
+
+
+def stored_note(conn: sqlite3.Connection, source: str, note_id: str) -> dict | None:
+    row = conn.execute(
+        "SELECT raw FROM resources WHERE origin = ? AND source = ? "
+        "AND resource_type = 'DocumentReference' AND resource_id = ?",
+        (FHIR_ORIGIN, source, note_id),
+    ).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def _searches_signature() -> str:
+    return json.dumps(sorted([rtype, sorted(params.items())] for rtype, params in SEARCHES))
+
+
+def _utc(moment: datetime) -> str:
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def sync_since(
+    conn: sqlite3.Connection,
+    fhir_base: str,
+    patient_id: str,
+    source: str,
+    *,
+    full: bool = False,
+    now: datetime | None = None,
+) -> str | None:
+    """Where an incremental sync can start, or None when this one must be full."""
+    row = conn.execute(
+        "SELECT patient_id, source, searches, since, full_at FROM sync_state WHERE fhir_base = ?",
+        (fhir_base,),
+    ).fetchone()
+    if full or row is None:
+        return None
+    saved_patient, saved_source, searches, since, full_at = row
+    if (saved_patient, saved_source, searches) != (patient_id, source, _searches_signature()):
+        return None
+    now = now or datetime.now(UTC)
+    if now - datetime.fromisoformat(full_at) > FULL_SYNC_EVERY:
+        return None
+    return since
+
+
+def store(
+    conn: sqlite3.Connection, source: str, fhir_base: str, chart: Chart, started: datetime
+) -> Counter:
+    """Save a fetched chart and where the next sync starts.
+
+    A full sync replaces each type it fetched completely. An incremental one replaces the
+    types without _lastUpdated and upserts the changed records of the rest. Rows of a type
+    whose search failed are kept. An incremental sync that missed changes keeps the old
+    starting point so the next one asks again; a full sync always moves it (a permanently
+    refused API would otherwise make every sync full).
+    """
+    replace = chart.complete - (INCREMENTAL_TYPES if chart.since else set())
     counts: Counter = Counter()
     with conn:
-        delete_records(conn, FHIR_ORIGIN, source)
-        for resource in resources:
-            if insert_resource(conn, FHIR_ORIGIN, source, resource):
-                counts[resource["resourceType"]] += 1
+        for rtype in replace:
+            delete_records(conn, FHIR_ORIGIN, source, rtype)
+        for resource in chart.resources:
+            if resource["resourceType"] in replace:
+                if not insert_resource(conn, FHIR_ORIGIN, source, resource):
+                    counts["_duplicate"] += 1
+                    continue
             else:
-                counts["_duplicate"] += 1
+                replace_resource(conn, FHIR_ORIGIN, source, resource)
+            counts[resource["resourceType"]] += 1
         conn.execute(
             "INSERT OR REPLACE INTO import_meta VALUES (?, ?, ?, ?)",
             (
@@ -496,6 +606,26 @@ def store(conn: sqlite3.Connection, source: str, fhir_base: str, resources: list
                 datetime.now(UTC).isoformat(timespec="seconds"),
                 _redact(fhir_base),
                 json.dumps(counts),
+            ),
+        )
+        previous = conn.execute(
+            "SELECT since, full_at FROM sync_state WHERE fhir_base = ?", (fhir_base,)
+        ).fetchone()
+        since = _utc(started - OVERLAP)
+        full_at = started.isoformat()
+        if chart.since and previous:
+            full_at = previous[1]
+            if chart.missed_changes:
+                since = previous[0]  # ask for them again next time
+        conn.execute(
+            "INSERT OR REPLACE INTO sync_state VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                fhir_base,
+                chart.resources[0]["id"],
+                source,
+                _searches_signature(),
+                since,
+                full_at,
             ),
         )
     return counts

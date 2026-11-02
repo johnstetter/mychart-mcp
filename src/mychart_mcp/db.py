@@ -51,6 +51,16 @@ CREATE TABLE IF NOT EXISTS import_meta (
     source_file TEXT,
     counts      TEXT
 );
+
+-- Where the next `sync` of each FHIR server can start (sync only; the server never reads it).
+CREATE TABLE IF NOT EXISTS sync_state (
+    fhir_base  TEXT PRIMARY KEY,
+    patient_id TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    searches   TEXT NOT NULL,  -- the searches run; a change forces a full sync
+    since      TEXT NOT NULL,  -- next incremental sync asks for changes from here (UTC)
+    full_at    TEXT NOT NULL   -- when the last full sync ran
+);
 """
 
 

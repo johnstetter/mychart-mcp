@@ -78,10 +78,21 @@ def import_apple_health(conn: sqlite3.Connection, zip_path: Path) -> Counter:
     return counts
 
 
-def delete_records(conn: sqlite3.Connection, origin: str, source: str | None = None) -> int:
-    """Delete one origin's rows (optionally only one source) and their search index entries."""
-    where = "origin = ?" + (" AND source = ?" if source is not None else "")
-    params = (origin,) if source is None else (origin, source)
+def delete_records(
+    conn: sqlite3.Connection,
+    origin: str,
+    source: str | None = None,
+    resource_type: str | None = None,
+) -> int:
+    """Delete one origin's rows (optionally one source / type) and their search index entries."""
+    where = "origin = ?"
+    params: tuple = (origin,)
+    if source is not None:
+        where += " AND source = ?"
+        params += (source,)
+    if resource_type is not None:
+        where += " AND resource_type = ?"
+        params += (resource_type,)
     conn.execute(
         f"DELETE FROM resources_fts WHERE rowid IN (SELECT rowid FROM resources WHERE {where})",
         params,
@@ -122,3 +133,18 @@ def insert_resource(
         (cur.lastrowid, x.display or "", " ".join(x.codes), x.body),
     )
     return True
+
+
+def replace_resource(
+    conn: sqlite3.Connection, origin: str, source: str | None, resource: dict
+) -> None:
+    """Insert `resource`, replacing any earlier copy of it (same origin, source, type and id)."""
+    x = extract(resource)
+    key = (origin, source or "", x.resource_type, x.resource_id)
+    where = "origin = ? AND source = ? AND resource_type = ? AND resource_id = ?"
+    conn.execute(
+        f"DELETE FROM resources_fts WHERE rowid IN (SELECT rowid FROM resources WHERE {where})",
+        key,
+    )
+    conn.execute(f"DELETE FROM resources WHERE {where}", key)
+    insert_resource(conn, origin, source, resource)

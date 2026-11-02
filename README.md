@@ -84,8 +84,10 @@ uv run mychart-mcp sync --fhir-base <R4 base URL> --client-id <production id> \
 ```
 
 Flags can also come from `MYCHART_MCP_FHIR_BASE`, `MYCHART_MCP_CLIENT_ID`,
-`MYCHART_MCP_REDIRECT_URI`, `MYCHART_MCP_CERT` and `MYCHART_MCP_KEY`. Re-running replaces
-that health system's synced records.
+`MYCHART_MCP_REDIRECT_URI`, `MYCHART_MCP_CERT` and `MYCHART_MCP_KEY`. Re-runs download
+only what changed since the last sync. A full sync still runs every 30 days, or with
+`--full`, to drop records deleted upstream
+([details](docs/epic-setup.md#7-keeping-it-current)).
 
 Each run needs a browser sign-in, so re-run it on a reminder (after visits, or monthly).
 Unattended syncs (`--remember`, `schedule-config`) are in the code but don't work against

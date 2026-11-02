@@ -8,6 +8,7 @@ import json
 import threading
 import urllib.parse
 import urllib.request
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -87,16 +88,43 @@ class FakeHttp(epic.Http):
         return body if isinstance(body, bytes) else epic.json.dumps(body).encode()
 
 
+NOW = datetime(2026, 11, 1, 12, tzinfo=UTC)
+
+
+def run_sync(path, http, *, full=False, now=NOW):
+    """What `mychart-mcp sync` does after signing in."""
+    conn = connect_rw(path)
+    try:
+        patient = epic.fetch_patient(http, "p1")
+        source = epic.source_name(patient, BASE)
+        since = epic.sync_since(conn, BASE, "p1", source, full=full, now=now)
+        chart = epic.fetch_chart(
+            http,
+            patient,
+            since=since,
+            stored_note=lambda note_id: epic.stored_note(conn, source, note_id),
+        )
+        counts = epic.store(conn, source, BASE, chart, now)
+    finally:
+        conn.close()
+    return chart, counts
+
+
+def rows(path, sql, *params):
+    conn = connect_rw(path)
+    try:
+        return conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+
 @pytest.fixture()
 def synced(tmp_path, monkeypatch):
     path = tmp_path / "health.db"
     monkeypatch.setenv("MYCHART_MCP_DB", str(path))
     http = FakeHttp()
-    resources, problems = epic.fetch_chart(http, "p1")
-    conn = connect_rw(path)
-    counts = epic.store(conn, epic.source_name(resources[0], BASE), BASE, resources)
-    conn.close()
-    return path, http, resources, problems, counts
+    chart, counts = run_sync(path, http)
+    return path, http, chart.resources, chart.problems, counts
 
 
 def test_fetch_follows_pages_and_skips_operation_outcomes(synced):
@@ -127,12 +155,184 @@ def test_source_from_managing_organization(synced):
 
 def test_resync_replaces_rather_than_duplicates(synced):
     path, _, resources, _, _ = synced
-    conn = connect_rw(path)
-    epic.store(conn, "Example Health", BASE, resources)
-    n = conn.execute("SELECT COUNT(*) FROM resources").fetchone()[0]
-    fts = conn.execute("SELECT COUNT(*) FROM resources_fts").fetchone()[0]
-    conn.close()
+    run_sync(path, FakeHttp(), full=True)
+    (n,) = rows(path, "SELECT COUNT(*) FROM resources")[0]
+    (fts,) = rows(path, "SELECT COUNT(*) FROM resources_fts")[0]
     assert n == fts == len(resources)
+
+
+# --- Incremental sync ------------------------------------------------------------------------
+
+LATER = NOW + timedelta(days=3)
+
+
+class ChangedSince(FakeHttp):
+    """A server where, since the last sync, one lab was corrected and one added."""
+
+    def get(self, url, accept="application/fhir+json"):
+        rel = self.resolve(url).removeprefix(self.base)
+        if "_lastUpdated=ge" in rel and rel.startswith("Observation") and "laboratory" in rel:
+            self.requested.append(rel)
+            corrected = lab("o2", "2022-05-01", 5.8)
+            corrected["code"] = {"text": "Glycated hemoglobin"}
+            return epic.json.dumps(bundle(corrected, lab("o3", "2026-10-30", 5.7))).encode()
+        return super().get(url, accept)
+
+
+def test_first_sync_is_full_and_records_where_to_start(synced):
+    path, http, _, _, _ = synced
+    assert not any("_lastUpdated" in u for u in http.requested)
+    ((since, full_at),) = rows(path, "SELECT since, full_at FROM sync_state")
+    assert since == "2026-10-31T12:00:00Z"  # a day of overlap
+    assert full_at == NOW.isoformat()
+
+
+def test_next_sync_asks_only_for_changes(synced):
+    path = synced[0]
+    http = FakeHttp()
+    chart, _ = run_sync(path, http, now=LATER)
+    assert chart.since == "2026-10-31T12:00:00Z"
+    searched = [u for u in http.requested if "?patient=" in u]
+    for url in searched:
+        rtype = url.split("?")[0]
+        assert ("_lastUpdated=ge2026-10-31T12%3A00%3A00Z" in url) == (
+            rtype in epic.INCREMENTAL_TYPES
+        ), url
+    assert not any(u.startswith("Binary/") for u in http.requested)  # no changed notes
+    # Unchanged records stay.
+    ids = {r[0] for r in rows(path, "SELECT resource_id FROM resources")}
+    assert {"p1", "c1", "o1", "o2", "n1"} <= ids
+    assert server.search_records("saline rinse")
+
+
+def test_unchanged_note_reuses_stored_text(synced):
+    # Like Epic, the fake returns notes on change-only searches even when nothing changed.
+    path = synced[0]
+    routes = dict(ROUTES)
+    query = "DocumentReference?patient=p1&category=clinical-note"
+    since = "&_lastUpdated=ge2026-10-31T12%3A00%3A00Z"
+    routes[query + since] = routes[query]
+    http = FakeHttp(routes)
+    run_sync(path, http, now=LATER)
+    assert query + since in http.requested
+    assert not any(u.startswith("Binary/") for u in http.requested)
+    assert "saline rinse" in server.get_record("DocumentReference", "n1")["note_text"]
+
+
+def test_changed_note_refetches_text(synced):
+    path = synced[0]
+    routes = dict(ROUTES)
+    query = "DocumentReference?patient=p1&category=clinical-note"
+    changed = epic.json.loads(epic.json.dumps(routes[query]))
+    changed["entry"][0]["resource"]["docStatus"] = "amended"
+    routes[query + "&_lastUpdated=ge2026-10-31T12%3A00%3A00Z"] = changed
+    http = FakeHttp(routes)
+    run_sync(path, http, now=LATER)
+    assert "Binary/n1-html" in http.requested
+
+
+def test_full_sync_always_refetches_note_text(synced):
+    path = synced[0]
+    http = FakeHttp()
+    run_sync(path, http, full=True, now=LATER)
+    assert "Binary/n1-html" in http.requested
+
+
+def test_changed_record_replaces_its_old_copy(synced):
+    path = synced[0]
+    run_sync(path, ChangedSince(), now=LATER)
+    labs = rows(
+        path,
+        "SELECT resource_id, value FROM resources WHERE resource_type = 'Observation' "
+        "ORDER BY resource_id",
+    )
+    assert labs == [("o1", 5.6), ("o2", 5.8), ("o3", 5.7)]
+    assert {r["resource_id"] for r in server.search_records("glycated")} == {"o2"}
+    (n,) = rows(path, "SELECT COUNT(*) FROM resources")[0]
+    (fts,) = rows(path, "SELECT COUNT(*) FROM resources_fts")[0]
+    assert n == fts
+
+
+def test_types_without_last_updated_are_replaced_in_full(synced):
+    path = synced[0]
+    routes = dict(ROUTES)
+    routes["Condition?patient=p1&category=problem-list-item"] = bundle(
+        {"resourceType": "Condition", "id": "c2", "code": {"text": "Contact dermatitis"}}
+    )
+    run_sync(path, FakeHttp(routes), now=LATER)
+    conditions = rows(path, "SELECT resource_id FROM resources WHERE resource_type = 'Condition'")
+    assert conditions == [("c2",)]
+
+
+class SlowLabs(FakeHttp):
+    def get(self, url, accept="application/fhir+json"):
+        if "laboratory" in url:
+            raise epic.FhirError("timed out")
+        return super().get(url, accept)
+
+
+def test_failed_search_keeps_that_types_rows(synced):
+    path = synced[0]
+    chart, _ = run_sync(path, SlowLabs(), full=True, now=LATER)
+    assert "Observation" not in chart.complete
+    labs = rows(path, "SELECT resource_id FROM resources WHERE resource_type = 'Observation'")
+    assert sorted(labs) == [("o1",), ("o2",)]
+
+
+def test_problems_keep_the_starting_point_for_incremental_syncs(synced):
+    path = synced[0]
+    run_sync(path, SlowLabs(), now=LATER)
+    assert rows(path, "SELECT since FROM sync_state") == [("2026-10-31T12:00:00Z",)]
+    run_sync(path, FakeHttp(), now=LATER)
+    assert rows(path, "SELECT since FROM sync_state") == [("2026-11-03T12:00:00Z",)]
+
+
+def test_missing_note_text_keeps_the_starting_point(synced):
+    path = synced[0]
+    routes = dict(ROUTES)
+    query = "DocumentReference?patient=p1&category=clinical-note"
+    changed = epic.json.loads(epic.json.dumps(routes[query]))
+    changed["entry"][0]["resource"]["docStatus"] = "amended"
+    routes[query + "&_lastUpdated=ge2026-10-31T12%3A00%3A00Z"] = changed
+    del routes["Binary/n1-html"]
+
+    class NoNotes(FakeHttp):
+        def get(self, url, accept="application/fhir+json"):
+            if url.startswith("Binary/"):
+                raise epic.FhirError("HTTP 404")
+            return super().get(url, accept)
+
+    chart, _ = run_sync(path, NoNotes(routes), now=LATER)
+    assert chart.problems["note text unavailable"] == 1
+    assert rows(path, "SELECT since FROM sync_state") == [("2026-10-31T12:00:00Z",)]
+
+
+def test_when_a_full_sync_is_needed(synced, monkeypatch):
+    path = synced[0]
+    conn = connect_rw(path)
+    try:
+
+        def since(**kw):
+            args = {"fhir_base": BASE, "patient_id": "p1", "source": "Example Health", **kw}
+            args.setdefault("now", LATER)
+            return epic.sync_since(conn, **args)
+
+        assert since() == "2026-10-31T12:00:00Z"
+        assert since(full=True) is None
+        assert since(patient_id="p2") is None
+        assert since(source="Other Health") is None
+        assert since(fhir_base="https://other.example.test/R4") is None
+        assert since(now=NOW + epic.FULL_SYNC_EVERY + timedelta(minutes=1)) is None
+        monkeypatch.setattr(epic, "SEARCHES", [*epic.SEARCHES, ("Goal", {})])
+        assert since() is None
+    finally:
+        conn.close()
+
+
+def test_incremental_sync_keeps_full_sync_date(synced):
+    path = synced[0]
+    run_sync(path, FakeHttp(), now=LATER)
+    assert rows(path, "SELECT full_at FROM sync_state") == [(NOW.isoformat(),)]
 
 
 def test_token_never_sent_off_host():
@@ -227,6 +427,7 @@ def test_forget_removes_only_that_origin(synced, monkeypatch):
     assert origins == [("apple_health",)]
     assert fts == 1
     assert meta == []
+    assert rows(path, "SELECT * FROM sync_state") == []
 
 
 def test_forget_asks_first(synced, monkeypatch):
@@ -275,16 +476,11 @@ def test_timeouts_and_gateway_errors_are_retried(monkeypatch):
 
 
 def test_persistent_timeout_skips_that_search_only(monkeypatch):
-    class SlowLabs(FakeHttp):
-        def get(self, url, accept="application/fhir+json"):
-            if "laboratory" in url:
-                raise epic.FhirError("timed out")
-            return super().get(url, accept)
-
     lines = []
-    resources, problems = epic.fetch_chart(SlowLabs(), "p1", progress=lines.append)
-    assert any(p.startswith("Observation (laboratory):") for p in problems)
-    assert any("DocumentReference" in r["resourceType"] for r in resources)
+    http = SlowLabs()
+    chart = epic.fetch_chart(http, epic.fetch_patient(http, "p1"), progress=lines.append)
+    assert any(p.startswith("Observation (laboratory):") for p in chart.problems)
+    assert any("DocumentReference" in r["resourceType"] for r in chart.resources)
     assert any("skipped" in line for line in lines)
 
 

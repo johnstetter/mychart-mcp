@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .db import connect_ro, connect_rw, db_path
@@ -126,29 +127,48 @@ def _sync(args: argparse.Namespace) -> int:
         if signed_in is None:
             return 1
         token, patient_id = signed_in
-        print("Signed in. Downloading records…", flush=True)
-        resources, problems = epic.fetch_chart(
-            epic.Http(fhir_base, token), patient_id, progress=lambda s: print(s, flush=True)
-        )
+        http = epic.Http(fhir_base, token)
+        patient = epic.fetch_patient(http, patient_id)
     except (epic.FhirError, OSError) as e:
         print(e, file=sys.stderr)
         return 1
 
-    source = args.name or epic.source_name(resources[0], fhir_base)
+    source = args.name or epic.source_name(patient, fhir_base)
     conn = connect_rw()
     try:
-        counts = epic.store(conn, source, fhir_base, resources)
+        since = epic.sync_since(conn, fhir_base, patient_id, source, full=args.full)
+        if since:
+            print(f"Signed in. Downloading changes since {since[:10]}…", flush=True)
+        else:
+            print("Signed in. Downloading your whole chart (full sync)…", flush=True)
+        started = datetime.now(UTC)
+        try:
+            chart = epic.fetch_chart(
+                http,
+                patient,
+                since=since,
+                progress=lambda s: print(s, flush=True),
+                stored_note=lambda note_id: epic.stored_note(conn, source, note_id),
+            )
+        except (epic.FhirError, OSError) as e:
+            print(e, file=sys.stderr)
+            return 1
+        counts = epic.store(conn, source, fhir_base, chart, started)
     finally:
         conn.close()
 
     total = sum(n for k, n in counts.items() if not k.startswith("_"))
-    print(f"Synced {total} records from {source} into {db_path()}")
+    if since:
+        print(f"Updated {source} in {db_path()}: {total} records new, changed or refreshed")
+    else:
+        print(f"Synced {total} records from {source} into {db_path()}")
     for rtype, n in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"  {rtype:<22} {n}")
-    if problems:
+    if chart.problems:
         print("\nSkipped (usually an API not enabled for the app, or not offered by this server):")
-        for problem, n in problems.items():
+        for problem, n in chart.problems.items():
             print(f"  {problem}" + (f" ×{n}" if n > 1 else ""))
+        print("If these were temporary (timeouts), run `mychart-mcp sync --full` later.")
     return 0
 
 
@@ -188,6 +208,12 @@ def _forget(args: argparse.Namespace) -> int:
             delete_records(conn, args.origin, args.source)
             if args.source is None:
                 conn.execute("DELETE FROM import_meta WHERE origin = ?", (args.origin,))
+            if args.origin == "fhir":
+                # Without its records, the next sync of that server must be a full one.
+                conn.execute(
+                    "DELETE FROM sync_state" + (" WHERE source = ?" if args.source else ""),
+                    (args.source,) if args.source else (),
+                )
         # Deleted rows linger in free pages until the file is rebuilt.
         conn.execute("VACUUM")
     finally:
@@ -359,6 +385,11 @@ def main() -> None:
     p.add_argument("--cert", default=os.environ.get("MYCHART_MCP_CERT"), help="for https redirect")
     p.add_argument("--key", default=os.environ.get("MYCHART_MCP_KEY"), help="for https redirect")
     p.add_argument("--name", help="Source name for these records (default: from the chart)")
+    p.add_argument(
+        "--full",
+        action="store_true",
+        help="Download everything, not just changes since the last sync (automatic every 30 days)",
+    )
     p.add_argument(
         "--remember",
         action="store_true",
