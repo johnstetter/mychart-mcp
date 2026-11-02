@@ -252,13 +252,14 @@ See [TERMS.md](TERMS.md) for the terms of use and privacy statement shown to Epi
 
 ```
 src/mychart_mcp/
-  cli.py        import / sync / stats / serve / client-config commands
-  importers.py  Apple Health export.zip → SQLite
+  cli.py        the mychart-mcp commands
   epic.py       Epic SMART on FHIR sign-in and download (the only network code)
+  keychain.py   saved sign-ins in the macOS Keychain (experimental)
+  importers.py  Apple Health export.zip → SQLite, and record upserts for sync
   fhir.py       field extraction from FHIR R4 and DSTU2 resources
   db.py         schema and read-write / read-only connections
   server.py     MCP tools
-tests/          end-to-end tests on a synthetic export
+tests/          synthetic data only: a fake FHIR server, saved sign-ins, an Apple Health export
 .githooks/      pre-commit hook that blocks health-data files
 ```
 
@@ -269,7 +270,7 @@ uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
 
-CI runs both on Python 3.11 to 3.13. Tests use a synthetic export only; never put real health
+CI runs both on Python 3.11 to 3.13. Tests use synthetic data only; never put real health
 data in `tests/`. The pre-commit hook rejects databases, zips, Apple Health exports, and
 FHIR/C-CDA files outside `tests/`.
 
