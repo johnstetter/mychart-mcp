@@ -280,6 +280,24 @@ def test_failed_search_keeps_that_types_rows(synced):
     assert sorted(labs) == [("o1",), ("o2",)]
 
 
+def test_only_a_full_sync_missing_a_change_only_type_needs_another_full_sync(synced):
+    path = synced[0]
+    chart, _ = run_sync(path, SlowLabs(), full=True, now=LATER)
+    assert chart.needs_full_sync  # later runs would ask only for lab changes since now
+    chart, _ = run_sync(path, SlowLabs(), now=LATER)
+    assert not chart.needs_full_sync  # the starting point stays, so a plain re-run asks again
+
+    class NoNotes(FakeHttp):
+        def get(self, url, accept="application/fhir+json"):
+            if url.startswith("Binary/"):
+                raise epic.FhirError("HTTP 404")
+            return super().get(url, accept)
+
+    chart, _ = run_sync(path, NoNotes(), full=True, now=LATER)
+    assert chart.problems["note text unavailable"] == 1
+    assert not chart.needs_full_sync  # notes come back every run and refetch missing text
+
+
 def test_problems_keep_the_starting_point_for_incremental_syncs(synced):
     path = synced[0]
     run_sync(path, SlowLabs(), now=LATER)

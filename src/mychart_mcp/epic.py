@@ -515,6 +515,11 @@ class Chart:
         """Whether a change-only search or a note's text failed (others refetch in full)."""
         return bool(self.changes_only - self.complete) or "note text unavailable" in self.problems
 
+    @property
+    def needs_full_sync(self) -> bool:
+        """Whether a full sync failed a search that later syncs ask only for changes of."""
+        return self.since is None and bool(INCREMENTAL_TYPES - self.complete)
+
 
 def changes_only_types(http: Http) -> frozenset[str]:
     """INCREMENTAL_TYPES this server says it can search by _lastUpdated.
