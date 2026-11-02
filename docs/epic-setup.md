@@ -266,10 +266,12 @@ Keep any Apple Health source you haven't set up for direct sync.
 
 `src/mychart_mcp/epic.py`:
 
-- `Http`: GETs with a bearer token, host pinning, a 120 s timeout, and up to three
-  attempts on timeouts and 502/503/504.
+- `Http`: GETs with a bearer token over one kept-alive connection to the FHIR server, a
+  120 s timeout, up to three attempts on timeouts and 502/503/504, and redirects followed
+  only on the same host (the token never goes anywhere else).
 - `pkce_pair`, `authorize_url`, `CallbackListener`, `exchange_code`, `login`: the SMART
-  standalone launch. `login` returns `(access_token, patient_id)`.
+  standalone launch. `login` returns a `Login` (access token, patient ID, the server's SMART
+  configuration and the granted scope).
 - `SEARCHES`: the searches `sync` runs. Epic requires a `category` on Condition and
   Observation searches, which is why those appear several times.
 - `search`: follows `next` links and drops Epic's `OperationOutcome` warning entries.
@@ -277,11 +279,15 @@ Keep any Apple Health source you haven't set up for direct sync.
   inline base64 `attachment.data`. `fhir.extract` then indexes it like any inline note.
 - `register_client`, `client_assertion`, `saved_login`: dynamic client registration and
   JWT-bearer token requests for saved sign-ins. `keychain.py` stores the credential.
-- `sync_since` → `fetch_chart` → `store`: decide full vs incremental from `sync_state`,
-  download (adding `_lastUpdated` for `INCREMENTAL_TYPES`), then write in one transaction.
-  A full sync replaces each type it fetched completely. An incremental one upserts changed
-  records (`importers.replace_resource`) and replaces the always-full types. Types whose
-  search failed keep their rows.
+- `sync_since` → `changes_only_types` → `fetch_chart` → `store`: decide full or incremental
+  from `sync_state`; read the CapabilityStatement for which of `INCREMENTAL_TYPES` the server
+  can filter by `_lastUpdated`; download (with `_lastUpdated` only for those types, reusing a
+  stored note's text when the note is unchanged and the stored copy has text); then write in
+  one transaction. A full sync replaces each type it fetched completely. An incremental one
+  upserts changed records (`importers.replace_resource`) and replaces the rest. Types whose
+  search failed keep their rows. `Chart.needs_full_sync` decides whether the summary
+  suggests `--full`.
 
-`tests/test_epic.py` exercises all of this against a fake in-memory FHIR server. The only
-real socket it opens is a loopback one for the redirect listener.
+`tests/test_epic.py` exercises all of this against a fake in-memory FHIR server. Its only
+real sockets are on loopback: the redirect listener and a scripted server for `Http`'s
+retries and reconnects.
