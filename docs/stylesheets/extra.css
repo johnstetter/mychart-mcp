@@ -1,0 +1,46 @@
+/* Colours from stetter.io: warm neutral background, near-black text, burnt-orange accent. */
+[data-md-color-scheme="default"][data-md-color-primary] {
+  --md-default-bg-color: #f7f6f2;
+  --md-default-fg-color: #14161a;
+  --md-default-fg-color--light: #3f444b;
+  --md-primary-fg-color: #f7f6f2;
+  --md-primary-bg-color: #14161a;
+  --md-accent-fg-color: #833500;
+  --md-typeset-a-color: #833500;
+  --md-code-bg-color: #ffffff;
+  --site-accent-fg: #ffffff;
+}
+
+[data-md-color-scheme="slate"][data-md-color-primary] {
+  --md-default-bg-color: #121417;
+  --md-default-fg-color: #f1f0ec;
+  --md-default-fg-color--light: #c5c7c9;
+  --md-primary-fg-color: #121417;
+  --md-primary-bg-color: #f1f0ec;
+  --md-accent-fg-color: #ffad66;
+  --md-typeset-a-color: #ffad66;
+  --md-code-bg-color: #1b1e22;
+  --site-accent-fg: #121417;
+}
+
+/* Header blends into the page; a hairline separates it. */
+.md-header,
+.md-header[data-md-state="shadow"],
+.md-header--shadow {
+  box-shadow: none;
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.md-typeset .md-button {
+  border-radius: 10px;
+  color: var(--md-typeset-a-color);
+  border-color: var(--md-typeset-a-color);
+}
+
+.md-typeset .md-button--primary,
+.md-typeset .md-button:hover,
+.md-typeset .md-button:focus {
+  background-color: var(--md-accent-fg-color);
+  border-color: var(--md-accent-fg-color);
+  color: var(--site-accent-fg);
+}
