@@ -19,6 +19,12 @@ Read-only MCP server over a local SQLite copy of the user's MyChart records. See
   which denies web and shell tools.
 - Don't run network commands in a session where health data is in the conversation.
 
+## Workflow
+
+- Every change gets a GitHub issue, its own branch off `main`, and a PR that closes the issue.
+  No direct commits to `main`, and no stacked PRs (a PR merged into another PR's branch
+  never reaches `main`).
+
 ## Commands
 
 ```sh
@@ -34,8 +40,10 @@ uv run ruff format .     # format
 - `src/mychart_mcp/keychain.py`: saved Epic sign-ins (device key) via `/usr/bin/security`
 - `src/mychart_mcp/epic.py`: `sync` command's SMART on FHIR login and download; the only
   module allowed network calls, and `server.py` must never import it
-- `src/mychart_mcp/db.py`: schema; `connect_rw` (importer) / `connect_ro` (server)
+- `src/mychart_mcp/db.py`: schema; `connect_rw` (importer, sync) / `connect_ro` (server);
+  `sync_state` holds each FHIR server's restart point (sync only)
 - `src/mychart_mcp/db.py` `_default_db()`: per-OS database path (macOS, XDG, Windows)
-- `src/mychart_mcp/cli.py`: `client-config` prints Claude Desktop / Hermes setup (absolute paths)
+- `src/mychart_mcp/cli.py`: every command; `client-config` prints Claude Desktop / Hermes setup
+  (absolute paths)
 - `src/mychart_mcp/server.py`: MCP tools (mcp SDK 2.x, `MCPServer`; raise `ToolError` for
   messages the model should see)
