@@ -172,43 +172,37 @@ avoid repeating the flags, set `MYCHART_MCP_FHIR_BASE`, `MYCHART_MCP_CLIENT_ID`,
 Run it in your own terminal, not through an AI assistant's shell tool, so your records'
 contents stay out of the assistant's context. The summary contains counts only.
 
-Re-running replaces that health system's synced records. Without a saved sign-in (next
-section), every run opens the browser.
+Re-running replaces that health system's synced records, and every run opens the browser.
 
-## 7. Scheduled syncs (macOS)
+## 7. Keeping it current
 
-Epic doesn't give public desktop apps refresh tokens. Instead, an app with **Can Register
-Dynamic Clients** registers a per-device client after one browser sign-in: it creates an RSA
-key, sends Epic only the public half, and from then on gets access tokens by signing a
-five-minute JWT with that key (`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`).
+Re-run step 6 when you want fresh records, for example after a visit or when new results
+post. A recurring reminder works well (Reminders or your calendar, monthly or after
+appointments).
+
+### Saved sign-ins (experimental, not working yet)
+
+The code supports unattended syncs through Epic's dynamic client registration: after one
+browser sign-in, `sync --remember` creates an RSA key on this Mac, registers its public half
+with Epic, and stores the key in the Keychain. Later runs (`sync --unattended`, or the
+LaunchAgent from `schedule-config`) sign a five-minute JWT with it instead of opening the
+browser.
+
+In testing this never got past registration. Epic only allows it when the sign-in grants
+`offline_access`, which in turn depends on MyChart offering the patient a choice of how long
+to allow access. Epic's sandbox shows a fixed "1 hour" and drops `offline_access`, and the
+app can't be changed to fix that: checking **Can Register Dynamic Clients** forces the app to
+be a public client, and the persistent-access options only exist for confidential clients.
+A health system's own MyChart may still offer durations; if yours does, try:
 
 ```sh
-# Once, interactively: sign in and save a device key in the login Keychain
-uv run mychart-mcp sync --remember --fhir-base <R4 base> --client-id <production id> \
-    --redirect-uri https://127.0.0.1:8765/callback --cert 127.0.0.1.pem --key 127.0.0.1-key.pem
-
-# From then on, no browser (fails instead of prompting if the saved sign-in stops working)
-uv run mychart-mcp sync --unattended --fhir-base <R4 base>
-
-# Daily at 05:00 via launchd
-uv run mychart-mcp schedule-config --fhir-base <R4 base> > ~/Library/LaunchAgents/io.github.mychart-mcp.sync.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.mychart-mcp.sync.plist
-launchctl kickstart gui/$(id -u)/io.github.mychart-mcp.sync     # run once now to test
+uv run mychart-mcp sync --remember   # plus the step 6 flags; pick the longest duration
 ```
 
-- If MyChart's consent screen asks **how long** to allow access, choose the longest option.
-  The saved sign-in stops working when that period ends or you remove the app under Linked
-  Apps; `--unattended` runs then fail, and the next interactive `sync --remember` replaces it.
-- The key is stored with Apple's `/usr/bin/security` tool (service `mychart-mcp`, one item per
-  FHIR base URL), passed on stdin so it never appears in the process list. Going through
-  Apple's tool, not Python, means a Homebrew Python upgrade can't trigger a Keychain access
-  prompt that a background job can't answer.
-- A LaunchAgent runs only while you're logged in to the Mac's GUI. After a reboot with no
-  login, the login Keychain is locked and runs fail until you log in. Output goes to
-  `~/Library/Logs/mychart-mcp-sync.log` (counts only). `schedule-config` takes `--hour`,
-  `--minute` and `--label`.
-- `mychart-mcp logout --fhir-base <R4 base>` deletes the saved key. Remove the app in MyChart
-  to revoke it on Epic's side as well.
+If Epic doesn't grant it, the run says "Epic didn't grant offline_access" and syncs as
+usual. If it does, `sync --unattended` and `schedule-config` take it from there; the key is
+stored with `/usr/bin/security` (service `mychart-mcp`, one item per FHIR base URL), and
+`mychart-mcp logout --fhir-base <R4 base>` deletes it.
 
 ### If you also imported from Apple Health
 
