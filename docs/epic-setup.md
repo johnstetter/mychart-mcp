@@ -185,7 +185,12 @@ Re-runs are **incremental**: the output starts with "Downloading changes since <
 
 - **What's fetched incrementally:** Observation (labs, vitals), DiagnosticReport,
   DocumentReference (notes) and Encounter are searched with `_lastUpdated=ge<last sync>`,
-  so only new or changed records come back. Epic leaves `meta.lastUpdated` off vitals and
+  so only new or changed records come back, **if your health system's server supports it**.
+  Servers silently ignore search parameters they don't support, so each incremental sync
+  first reads the server's CapabilityStatement (`metadata`) and filters only the types it
+  lists `_lastupdated` for; the rest are refreshed in full. The first line of output names
+  them. Epic's sandbox (August 2026 release) supports all four; a May 2026 release
+  supports only DocumentReference. Epic leaves `meta.lastUpdated` off vitals and
   clinical notes, so those return every time. For each note, the sync compares it with the
   stored copy and reuses the stored text when nothing changed. Note text is where most of a
   full sync's time goes, since each note is a separate request. A full sync always refetches

@@ -308,6 +308,43 @@ def test_missing_note_text_keeps_the_starting_point(synced):
     assert rows(path, "SELECT since FROM sync_state") == [("2026-10-31T12:00:00Z",)]
 
 
+def test_changes_only_types_come_from_the_capability_statement():
+    statement = {
+        "resourceType": "CapabilityStatement",
+        "rest": [
+            {
+                "resource": [
+                    {"type": "DocumentReference", "searchParam": [{"name": "_lastupdated"}]},
+                    {"type": "Observation", "searchParam": [{"name": "date"}]},
+                    {"type": "Patient", "searchParam": [{"name": "_lastUpdated"}]},
+                ]
+            }
+        ],
+    }
+    assert epic.changes_only_types(FakeHttp({"metadata": statement})) == {"DocumentReference"}
+    assert epic.changes_only_types(FakeHttp({})) == frozenset()  # no statement: all in full
+
+
+def test_types_the_server_cant_filter_are_replaced_in_full(synced):
+    # An older Epic ignores _lastUpdated on Observation and returns every lab; a lab deleted
+    # upstream (o1) must disappear rather than linger.
+    path = synced[0]
+    routes = dict(ROUTES)
+    routes["Observation?patient=p1&category=laboratory"] = bundle(lab("o2", "2022-05-01", 5.9))
+    http = FakeHttp(routes)
+    conn = connect_rw(path)
+    try:
+        patient = epic.fetch_patient(http, "p1")
+        since = epic.sync_since(conn, BASE, "p1", "Example Health", now=LATER)
+        chart = epic.fetch_chart(http, patient, since=since, changes_only=frozenset())
+        epic.store(conn, "Example Health", BASE, chart, LATER)
+    finally:
+        conn.close()
+    assert not any("_lastUpdated" in u for u in http.requested)
+    labs = rows(path, "SELECT resource_id FROM resources WHERE resource_type = 'Observation'")
+    assert labs == [("o2",)]
+
+
 def test_when_a_full_sync_is_needed(synced, monkeypatch):
     path = synced[0]
     conn = connect_rw(path)

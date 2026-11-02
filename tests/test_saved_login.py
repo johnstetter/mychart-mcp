@@ -161,7 +161,7 @@ def test_unattended_with_saved_login_syncs(fake_security, credential, monkeypatc
     monkeypatch.setattr(
         epic,
         "fetch_chart",
-        lambda http, patient, since, progress, stored_note: epic.Chart(
+        lambda http, patient, since, progress, **_: epic.Chart(
             [patient], Counter(), {"Patient"}, since
         ),
     )

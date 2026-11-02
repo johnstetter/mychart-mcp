@@ -137,8 +137,13 @@ def _sync(args: argparse.Namespace) -> int:
     conn = connect_rw()
     try:
         since = epic.sync_since(conn, fhir_base, patient_id, source, full=args.full)
+        changes_only = epic.changes_only_types(http) if since else frozenset()
         if since:
-            print(f"Signed in. Downloading changes since {since[:10]}…", flush=True)
+            print(
+                f"Signed in. Downloading changes since {since[:10]}"
+                f" ({', '.join(sorted(changes_only)) or 'none'}; the rest in full)…",
+                flush=True,
+            )
         else:
             print("Signed in. Downloading your whole chart (full sync)…", flush=True)
         started = datetime.now(UTC)
@@ -149,6 +154,7 @@ def _sync(args: argparse.Namespace) -> int:
                 since=since,
                 progress=lambda s: print(s, flush=True),
                 stored_note=lambda note_id: epic.stored_note(conn, source, note_id),
+                changes_only=changes_only,
             )
         except (epic.FhirError, OSError) as e:
             print(e, file=sys.stderr)

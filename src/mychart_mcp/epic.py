@@ -50,8 +50,9 @@ SEARCHES: list[tuple[str, dict[str, str]]] = [
     ("Procedure", {}),
 ]
 
-# Types Epic can search by _lastUpdated. The rest have only clinical-date filters, which miss
-# late corrections, so every sync refetches them in full (they're small).
+# Types Epic can search by _lastUpdated (from the August 2026 release; older servers list fewer,
+# see changes_only_types). The rest have only clinical-date filters, which miss late
+# corrections, so every sync refetches them in full.
 INCREMENTAL_TYPES = frozenset({"Observation", "DiagnosticReport", "DocumentReference", "Encounter"})
 # A _lastUpdated search can't report deletions; a periodic full sync drops them.
 FULL_SYNC_EVERY = timedelta(days=30)
@@ -507,11 +508,34 @@ class Chart:
     problems: Counter
     complete: set[str]  # types whose every search succeeded
     since: str | None  # None for a full sync
+    changes_only: frozenset[str] = frozenset()  # types searched with _lastUpdated
 
     @property
     def missed_changes(self) -> bool:
         """Whether a change-only search or a note's text failed (others refetch in full)."""
-        return bool(INCREMENTAL_TYPES - self.complete) or "note text unavailable" in self.problems
+        return bool(self.changes_only - self.complete) or "note text unavailable" in self.problems
+
+
+def changes_only_types(http: Http) -> frozenset[str]:
+    """INCREMENTAL_TYPES this server says it can search by _lastUpdated.
+
+    Servers silently ignore a search parameter they don't support, which would return
+    everything while the sync treated it as only the changes.
+    """
+    try:
+        statement = http.get_json("metadata")
+    except FhirError:
+        return frozenset()
+    supported = {
+        resource.get("type")
+        for rest in statement.get("rest") or []
+        for resource in rest.get("resource") or []
+        if any(
+            (param.get("name") or "").lower() == "_lastupdated"
+            for param in resource.get("searchParam") or []
+        )
+    }
+    return INCREMENTAL_TYPES & supported
 
 
 def fetch_patient(http: Http, patient_id: str) -> dict:
@@ -524,8 +548,9 @@ def fetch_chart(
     since: str | None = None,
     progress: Callable[[str], object] = lambda _: None,
     stored_note: Callable[[str], dict | None] = lambda _: None,
+    changes_only: frozenset[str] = INCREMENTAL_TYPES,
 ) -> Chart:
-    """Download what the app may read; with `since`, only changes for INCREMENTAL_TYPES.
+    """Download what the app may read; with `since`, only changes for `changes_only` types.
 
     Epic returns notes without meta.lastUpdated on every incremental search, so with `since`
     a note whose stored copy (`stored_note(id)`) matches reuses that copy's text.
@@ -536,7 +561,7 @@ def fetch_chart(
     for rtype, params in SEARCHES:
         label = f"{rtype} ({params['category']})" if params else rtype
         query = {"patient": patient["id"], **params}
-        if since and rtype in INCREMENTAL_TYPES:
+        if since and rtype in changes_only:
             query["_lastUpdated"] = f"ge{since}"
         try:
             found = list(search(http, rtype, query))
@@ -564,7 +589,7 @@ def fetch_chart(
                 progress(f"    note text unchanged for {reused}, reused")
         resources.extend(found)
     complete = {"Patient"} | {rtype for rtype, _ in SEARCHES} - failed
-    return Chart(resources, problems, complete, since)
+    return Chart(resources, problems, complete, since, changes_only if since else frozenset())
 
 
 def _note_key(doc: dict) -> str:
@@ -627,7 +652,7 @@ def store(
     starting point so the next one asks again; a full sync always moves it (a permanently
     refused API would otherwise make every sync full).
     """
-    replace = chart.complete - (INCREMENTAL_TYPES if chart.since else set())
+    replace = chart.complete - chart.changes_only
     counts: Counter = Counter()
     with conn:
         for rtype in replace:
