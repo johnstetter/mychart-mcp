@@ -327,7 +327,8 @@ def _client_config(args: argparse.Namespace) -> int:
         print(json.dumps({"mcpServers": {"mychart": entry}}, indent=2))
     else:
         # JSON scalars and flow sequences are valid YAML, which keeps quoting safe.
-        print("# Add under mcp_servers: in ~/.hermes/config.yaml")
+        print("# Add under mcp_servers: in a dedicated profile's config, e.g.")
+        print("# ~/.hermes/profiles/health/config.yaml (hermes profile create health)")
         print("mcp_servers:\n  mychart:")
         for key, value in entry.items():
             if isinstance(value, dict):

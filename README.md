@@ -129,12 +129,33 @@ uv run mychart-mcp client-config claude-code --dir ~/HealthChat # Claude Code (c
 
 | Client | Config file | Then |
 |---|---|---|
-| Hermes | `~/.hermes/config.yaml` (add under `mcp_servers:`) | Restart Hermes |
+| Hermes | a dedicated profile's `config.yaml` (add under `mcp_servers:`; see below) | `hermes -p health` |
 | Claude Desktop | `claude_desktop_config.json` (merge into `mcpServers`) | Quit and reopen Claude |
 | Claude Code | `.mcp.json` + `.claude/settings.json` in the folder you pass | Run `claude` in that folder |
 
 Set `MYCHART_MCP_DB` before running `client-config` to bake a non-default path into the
 snippet. After moving the repo, run `uv sync` and regenerate the config.
+
+### Hermes: use a dedicated profile
+
+Give your records their own [Hermes profile](https://hermes-agent.nousresearch.com/docs/reference/cli-commands)
+instead of adding the server to your everyday one. A profile is a separate Hermes instance
+with its own config, tools, memories and session history, so health details don't end up in
+the memory your other chats draw on, and the tools that can send data out stay off.
+
+```sh
+hermes profile create health        # no --clone: start without your usual memories and skills
+hermes -p health tools              # turn off web, browser, terminal and messaging toolsets
+uv run mychart-mcp client-config hermes   # paste under mcp_servers: in the profile's config.yaml
+hermes -p health                    # ask about your records here
+```
+
+- The profile's files live under `~/.hermes/profiles/health/` (`hermes -p health dump`
+  shows the path).
+- Don't make it the default with `hermes profile use`, and don't start a messaging gateway
+  for it; ask from the terminal on this machine.
+- Check `hermes -p health tools --summary` after Hermes updates, which can add toolsets.
+- Pair it with a local model (see below) so nothing leaves the machine.
 
 ### What it's for
 
@@ -182,8 +203,9 @@ The server itself:
     `.claude/settings.local.json`. This repo itself is for development: it allows web
     access and denies the `mychart` tools, so the two never meet in one session.
   - **Claude Desktop:** turn off other connectors in the chat's tools menu.
-  - **Hermes:** check which toolsets and messaging platforms are enabled. Memories and session
-    history are stored under `~/.hermes/`.
+  - **Hermes:** use a dedicated profile with web, browser, terminal and messaging toolsets
+    off ([above](#hermes-use-a-dedicated-profile)). Its memories and session history stay
+    under `~/.hermes/profiles/<name>/`, apart from your other chats.
 - **Revoking:** remove Apple Health and/or mychart-mcp under MyChart → Linked Apps, and
   delete the database.
 
