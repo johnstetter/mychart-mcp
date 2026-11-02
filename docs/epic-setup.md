@@ -29,6 +29,9 @@ local SQLite database  ◀── read-only ── mychart-mcp serve ── AI cl
   with the expected `state` and ignores anything else.
 - The **access token** is held in memory for one run and is never written anywhere. The
   HTTP client refuses to send it to any host other than the FHIR server you signed in to.
+- **Later syncs fetch only changes.** Each one first reads the server's CapabilityStatement
+  (`metadata`) to see which searches it can filter by last update
+  ([details](#7-keeping-it-current)).
 - **Everything is downloaded before anything is written.** If a run fails, your database
   is untouched. A successful run updates that health system's previously synced rows.
 - `src/mychart_mcp/epic.py` is the **only module that makes network calls**. The MCP server
@@ -200,7 +203,8 @@ Re-runs are **incremental**: the output starts with "Downloading changes since <
   late corrections, and they're small.
 - **Full syncs:** a change-only search can't report records deleted upstream, so a full
   sync still runs:
-  - on the first sync
+  - on the first sync, including the first one after upgrading from a version without
+    incremental sync
   - every 30 days
   - after `forget fhir`
   - when the patient, source name or list of searches changes
@@ -209,7 +213,11 @@ Re-runs are **incremental**: the output starts with "Downloading changes since <
   (one row per FHIR server). That point is the run's start time minus a day of overlap;
   overlapping records are simply updated again.
 - **If a change-only search or a note's text fails:** the restart point stays put, so the
-  next run asks for those changes again.
+  next run asks for those changes again. A note stored without its text is fetched again on
+  the next run, since notes come back every time.
+- **If searches were skipped:** the summary says what to run next. Usually a plain `sync`
+  recovers them. It says `sync --full` only after a *full* sync that missed labs, reports,
+  notes or encounters, because the restart point has already moved past those records.
 
 ### Saved sign-ins (experimental, not working yet)
 
@@ -259,7 +267,10 @@ Keep any Apple Health source you haven't set up for direct sync.
 | Browser certificate warning on `127.0.0.1` | `mkcert -install` didn't complete on the machine running the browser (see step 5). |
 | "Certificate file not found" | Run `mkcert 127.0.0.1` in the folder you pass to `--cert`/`--key`. |
 | A search listed under **Skipped** with `HTTP 403` | That API isn't enabled for the app, or the health system doesn't offer it. |
-| A search listed under **Skipped** with "timed out" | The server was slow even after three tries (120 s each). Re-run later. Other searches are kept. |
+| A search listed under **Skipped** with "timed out" | The server was slow even after three tries (120 s each). Other searches are kept. Later, run what the summary suggests: `sync`, or `sync --full` after a full sync that missed a change-only type. |
+| "Downloading your whole chart (full sync)" when you expected changes only | One of the [full-sync triggers](#7-keeping-it-current): 30 days since the last full sync, a different `--name` or patient, a new version that changed the searches, or `--full`. |
+| "Downloading changes since … (none; the rest in full)" | The server's CapabilityStatement lists `_lastUpdated` for none of those types (older Epic releases), so every run refetches everything. Correct, just slower. |
+| "Epic didn't grant offline_access" with `--remember` | MyChart didn't offer a choice of how long to allow access, so the sign-in can't be saved ([saved sign-ins](#saved-sign-ins-experimental-not-working-yet)). The sync itself carries on. |
 | "Redirect URI must be a loopback address" / "needs an explicit port" | Use `http(s)://127.0.0.1:<port>/callback`, exactly as registered. |
 
 ## Code map
