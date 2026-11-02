@@ -215,6 +215,12 @@ def _forget(args: argparse.Namespace) -> int:
             delete_records(conn, args.origin, args.source)
             if args.source is None:
                 conn.execute("DELETE FROM import_meta WHERE origin = ?", (args.origin,))
+            elif args.origin == "fhir":
+                conn.execute(
+                    "DELETE FROM import_meta WHERE origin = 'fhir' AND source_file IN "
+                    "(SELECT fhir_base FROM sync_state WHERE source = ?)",
+                    (args.source,),
+                )
             if args.origin == "fhir":
                 # Without its records, the next sync of that server must be a full one.
                 conn.execute(

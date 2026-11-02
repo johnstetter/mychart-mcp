@@ -20,6 +20,16 @@ def _default_db() -> Path:
 
 DEFAULT_DB = _default_db()
 
+# One row per import: the Apple Health export, and each synced FHIR server.
+IMPORT_META = """
+CREATE TABLE IF NOT EXISTS import_meta (
+    origin      TEXT NOT NULL,
+    source_file TEXT NOT NULL DEFAULT '',  -- export file name, or the FHIR base URL
+    imported_at TEXT NOT NULL,
+    counts      TEXT,
+    PRIMARY KEY (origin, source_file)
+);"""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS resources (
     rowid         INTEGER PRIMARY KEY,
@@ -45,12 +55,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS resources_fts USING fts5 (
     display, codes, body, content='', contentless_delete=1
 );
 
-CREATE TABLE IF NOT EXISTS import_meta (
-    origin      TEXT PRIMARY KEY,
-    imported_at TEXT NOT NULL,
-    source_file TEXT,
-    counts      TEXT
-);
+{IMPORT_META}
 
 -- Where the next `sync` of each FHIR server can start (sync only; the server never reads it).
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -61,7 +66,26 @@ CREATE TABLE IF NOT EXISTS sync_state (
     since      TEXT NOT NULL,  -- next incremental sync asks for changes from here (UTC)
     full_at    TEXT NOT NULL   -- when the last full sync ran
 );
-"""
+""".replace("{IMPORT_META}", IMPORT_META)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Re-key an import_meta from before it had a row per FHIR server."""
+    pk = [
+        r[1]
+        for r in sorted(conn.execute("PRAGMA table_info(import_meta)"), key=lambda r: r[5])
+        if r[5]
+    ]
+    if pk != ["origin"]:
+        return
+    with conn:
+        conn.execute("ALTER TABLE import_meta RENAME TO import_meta_old")
+        conn.execute(IMPORT_META)
+        conn.execute(
+            "INSERT INTO import_meta (origin, source_file, imported_at, counts) "
+            "SELECT origin, COALESCE(source_file, ''), imported_at, counts FROM import_meta_old"
+        )
+        conn.execute("DROP TABLE import_meta_old")
 
 
 def db_path() -> Path:
@@ -76,6 +100,7 @@ def connect_rw(path: Path | None = None) -> sqlite3.Connection:
     if is_new:
         os.chmod(path, 0o600)
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 

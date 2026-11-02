@@ -675,11 +675,12 @@ def store(
                 replace_resource(conn, FHIR_ORIGIN, source, resource)
             counts[resource["resourceType"]] += 1
         conn.execute(
-            "INSERT OR REPLACE INTO import_meta VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO import_meta (origin, source_file, imported_at, counts) "
+            "VALUES (?, ?, ?, ?)",
             (
                 FHIR_ORIGIN,
+                fhir_base,
                 datetime.now(UTC).isoformat(timespec="seconds"),
-                _redact(fhir_base),
                 json.dumps(counts),
             ),
         )

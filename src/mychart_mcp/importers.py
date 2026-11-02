@@ -66,12 +66,15 @@ def import_apple_health(conn: sqlite3.Connection, zip_path: Path) -> Counter:
                     else:
                         counts["_duplicate"] += 1
 
+            # A new export replaces the previous one, whatever its file name.
+            conn.execute("DELETE FROM import_meta WHERE origin = ?", (APPLE_ORIGIN,))
             conn.execute(
-                "INSERT OR REPLACE INTO import_meta VALUES (?, ?, ?, ?)",
+                "INSERT INTO import_meta (origin, source_file, imported_at, counts) "
+                "VALUES (?, ?, ?, ?)",
                 (
                     APPLE_ORIGIN,
-                    datetime.now(UTC).isoformat(timespec="seconds"),
                     zip_path.name,
+                    datetime.now(UTC).isoformat(timespec="seconds"),
                     json.dumps(counts),
                 ),
             )

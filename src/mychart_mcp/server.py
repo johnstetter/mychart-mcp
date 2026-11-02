@@ -89,7 +89,9 @@ def data_summary() -> dict[str, Any]:
         sources = [
             r[0] for r in conn.execute("SELECT DISTINCT source FROM resources WHERE source != ''")
         ]
-        imports = conn.execute("SELECT origin, imported_at, source_file FROM import_meta")
+        imports = conn.execute(
+            "SELECT origin, imported_at, source_file FROM import_meta ORDER BY imported_at"
+        )
         return {
             "record_types": [dict(r) for r in types],
             "sources": sources,
