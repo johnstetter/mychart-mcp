@@ -1,4 +1,4 @@
-"""Command line: `mychart-mcp import|sync|stats|serve|client-config`."""
+"""CLI: import, sync, logout, forget, serve, stats, schedule-config, client-config."""
 
 from __future__ import annotations
 
