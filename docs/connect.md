@@ -74,6 +74,12 @@ Keep the records away from anything that can send data out:
   execution and every other tool server for it.
 - Keep `mcpo` on `127.0.0.1`. It has no sign-in by default, so anything that can reach the
   port can read your records.
+- Run `mcpo` and Open WebUI on the same computer as the database, not on a shared stack and
+  not with the records mounted into a container. Start `mcpo` in a terminal for the session
+  and stop it afterwards; don't make it a service.
+- Open WebUI saves chats, tool results included. Use a throwaway data directory (or a
+  container started with `--rm` and no volume) and delete it afterwards, or check that its
+  temporary-chat mode doesn't save.
 
 ## Claude Desktop
 
