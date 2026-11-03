@@ -53,6 +53,28 @@ data anywhere. Run `claude` there to ask about your records. If you've added oth
 that can send data out (email, Slack, …), deny them too in that folder's
 `.claude/settings.local.json`.
 
+## Open WebUI: through a local bridge
+
+The server only speaks stdio, which Open WebUI can't launch itself. [mcpo](https://github.com/open-webui/mcpo)
+wraps a stdio MCP server as an OpenAPI tool server that Open WebUI can call.
+
+```sh
+uv run mychart-mcp client-config claude    # note the "command" and "args" it prints
+uvx mcpo --host 127.0.0.1 --port 8000 -- <command> <args>
+```
+
+Then in Open WebUI, add `http://127.0.0.1:8000/` under Admin Settings → Tools (use
+`http://host.docker.internal:8000/` if Open WebUI runs in Docker).
+
+Keep the records away from anything that can send data out:
+
+- Use a model served on your own computer (Ollama, …). Don't connect Open WebUI to a hosted
+  API while this tool is enabled: the records would travel in the conversation.
+- Make a dedicated model (or user) with only this tool enabled. Turn off web search, code
+  execution and every other tool server for it.
+- Keep `mcpo` on `127.0.0.1`. It has no sign-in by default, so anything that can reach the
+  port can read your records.
+
 ## Claude Desktop
 
 Turn off other connectors in the chat's tools menu while asking about your records.
