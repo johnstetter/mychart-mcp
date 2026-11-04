@@ -40,10 +40,46 @@ hermes -p health                    # ask about your records here
 
 - The profile's files live under `~/.hermes/profiles/health/` (`hermes -p health dump`
   shows the path).
-- Don't make it the default with `hermes profile use`, and don't start a messaging gateway
-  for it; ask from the terminal on this machine.
+- Don't make it the default with `hermes profile use`. Ask from the terminal on this machine,
+  or opt in to a dedicated Telegram bot (below).
 - Check `hermes -p health tools --summary` after Hermes updates, which can add toolsets.
 - Pair it with a local model (Ollama, LM Studio, …) so nothing leaves the machine.
+
+### Optional: ask from Telegram
+
+This trades privacy for convenience. Telegram bot chats aren't end-to-end encrypted, so your
+questions and the answers, record text included, pass through Telegram's servers. Skip this
+unless you accept that.
+
+Use a bot made only for this profile. Never reuse the bot your everyday profile uses, which
+has web and terminal tools.
+
+1. In Telegram, ask [@BotFather](https://t.me/BotFather) for `/newbot`, then `/setjoingroups`
+   → Disable so nobody can add it to a group.
+2. Put the bot token and your numeric Telegram user ID in the profile's `.env`
+   (`~/.hermes/profiles/health/.env`): `TELEGRAM_BOT_TOKEN=…` and `TELEGRAM_ALLOWED_USERS=…`.
+   Without the allowlist, anyone who finds the bot can read your records.
+3. In the profile's `config.yaml`, enable the platform and leave out a home channel so nothing
+   posts on its own:
+
+   ```yaml
+   platforms:
+     telegram:
+       enabled: true
+   gateway:
+     allow_all_users: false
+   ```
+
+4. Restart the profile (`hermes -p health gateway restart`). If another profile's gateway
+   already runs on the machine, Hermes
+   [serves this profile from it](https://hermes-agent.nousresearch.com/docs/user-guide/multi-profile-gateways)
+   with the profile's own token, so no second daemon is needed.
+5. Check `hermes -p health tools list --platform telegram`: only the mychart tools (plus
+   `todo` and `clarify`) should be enabled. Then message the bot "search the web for today's
+   date"; it should say it has no such tool.
+
+Hermes saves chat transcripts under the profile's folder, record text included, so they are
+only as private as that disk. Use full-disk encryption (FileVault on macOS).
 
 ## Claude Code: a separate folder
 
