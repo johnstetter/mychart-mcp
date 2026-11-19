@@ -71,6 +71,22 @@ ROUTES = {
         }
     ),
     "Binary/n1-html": NOTE.encode(),
+    "ServiceRequest?patient=p1&category=108252007": bundle(
+        {
+            "resourceType": "ServiceRequest",
+            "id": "sr1",
+            "status": "active",
+            "intent": "order",
+            "category": [{"text": "Lab"}],
+            "code": {
+                "text": "Basic metabolic panel",
+                "coding": [{"system": "http://loinc.org", "code": "51990-0"}],
+            },
+            "authoredOn": "2026-10-20T15:00:00Z",
+            "occurrenceDateTime": "2026-12-01",
+            "requester": {"reference": "Practitioner/pr1", "display": "Example Clinician"},
+        }
+    ),
 }
 FORBIDDEN = {"Procedure?patient=p1"}
 
@@ -141,6 +157,27 @@ def test_forbidden_search_is_reported_not_fatal(synced):
     _, _, _, problems, counts = synced
     assert any(p.startswith("Procedure:") for p in problems)
     assert counts["Patient"] == 1
+
+
+def test_pending_lab_order_is_stored_and_listed(synced):
+    [order] = server.list_records("ServiceRequest")
+    assert order["status"] == "active"
+    assert order["display"] == "Basic metabolic panel"
+    assert order["date"] == "2026-12-01"  # when it's due, not when it was ordered
+    assert order["recorded"] == "2026-10-20T15:00:00Z"
+    assert order["codes"] == ["LOINC:51990-0"]
+    assert order["order"] == {
+        "intent": "order",
+        "category": ["Lab"],
+        "requester": "Example Clinician",
+        "authored_on": "2026-10-20T15:00:00Z",
+        "occurrence": "2026-12-01",
+    }
+    [hit] = server.search_records("metabolic", resource_types=["ServiceRequest"])
+    assert hit["order"]["requester"] == "Example Clinician"
+    assert "order" not in server.list_records("Condition")[0]
+    record = server.get_record("ServiceRequest", "sr1")
+    assert record["resource"]["intent"] == "order"
 
 
 def test_note_text_fetched_as_html_and_searchable(synced):

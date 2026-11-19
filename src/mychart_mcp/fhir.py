@@ -41,6 +41,12 @@ DATE_PATHS = {
     "AllergyIntolerance": ["onsetDateTime", "recordedDate"],
     "DocumentReference": ["context.period.start", "date", "created", "indexed"],
     "CarePlan": ["period.start", "created"],
+    "ServiceRequest": [
+        "occurrenceDateTime",
+        "occurrencePeriod.start",
+        "occurrenceTiming.event",
+        "authoredOn",
+    ],
 }
 GENERIC_DATE_PATHS = ["effectiveDateTime", "period.start", "date", "issued", "authoredOn"]
 
@@ -52,6 +58,7 @@ END_PATHS = [
     "effectivePeriod.end",
     "performedPeriod.end",
     "context.period.end",
+    "occurrencePeriod.end",
 ]
 
 CONCEPT_PATHS = [
@@ -213,6 +220,24 @@ def extract(resource: dict) -> Extracted:
         parts.append(_strip_html(narrative))
     out.body = "\n".join(p for p in parts if p.strip())
     return out
+
+
+OCCURRENCE_KEYS = ("occurrenceDateTime", "occurrencePeriod", "occurrenceTiming")
+
+
+def order_details(resource: dict) -> dict[str, Any]:
+    """The ServiceRequest fields that say what was ordered, by whom and for when."""
+    requester = resource.get("requester") or {}
+    details = {
+        "intent": resource.get("intent"),
+        "priority": resource.get("priority"),
+        "category": [_concept_display(c) for c in resource.get("category") or []],
+        "requester": requester.get("display"),
+        "authored_on": resource.get("authoredOn"),
+        "occurrence": next((resource[k] for k in OCCURRENCE_KEYS if resource.get(k)), None),
+    }
+    details["category"] = [c for c in details["category"] if c]
+    return {k: v for k, v in details.items() if v}
 
 
 def iter_resources(doc: Any) -> Iterator[dict]:

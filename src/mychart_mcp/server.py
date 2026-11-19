@@ -12,7 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from .db import connect_ro
-from .fhir import extract
+from .fhir import extract, order_details
 
 MAX_LIMIT = 200
 NOTE_CHAR_LIMIT = 20_000
@@ -37,6 +37,8 @@ SUMMARY_COLUMNS = (
     "resource_type, resource_id, source, date, recorded, end_date, status, "
     "display, codes, value, unit, value_text"
 )
+# Orders keep intent, requester and timing only in the raw resource.
+ORDER_COLUMN = "CASE WHEN r.resource_type = 'ServiceRequest' THEN r.raw END AS order_raw"
 
 
 def _conn() -> sqlite3.Connection:
@@ -61,6 +63,8 @@ def _fts_query(text: str) -> str:
 def _summarize(row: sqlite3.Row) -> dict[str, Any]:
     # sqlite3.Row iterates values, not keys, so .keys() is required here.
     out = {k: row[k] for k in row.keys() if row[k] not in (None, "")}  # noqa: SIM118
+    if "order_raw" in out:
+        out["order"] = order_details(json.loads(out.pop("order_raw")))
     if "codes" in out:
         out["codes"] = out["codes"].split()
     return out
@@ -111,7 +115,8 @@ def search_records(
     """Full-text search over all records (names, codes, and note text).
 
     query: words or codes, e.g. "asthma", "J45", "inhaler", "A1c".
-    resource_types: optional filter, e.g. ["Condition", "Encounter", "DocumentReference"].
+    resource_types: optional filter, e.g. ["Condition", "Encounter", "DocumentReference",
+    "ServiceRequest"].
     date_from / date_to: optional YYYY-MM-DD bounds on the clinical date (inclusive).
     """
     date_sql, date_params = _date_filters(date_from, date_to)
@@ -124,7 +129,8 @@ def search_records(
         "date_desc": "r.date DESC",
     }[sort]
     sql = (
-        f"SELECT {', '.join('r.' + c.strip() for c in SUMMARY_COLUMNS.split(','))} "
+        f"SELECT {', '.join('r.' + c.strip() for c in SUMMARY_COLUMNS.split(','))}, "
+        f"{ORDER_COLUMN} "
         "FROM resources_fts f JOIN resources r ON r.rowid = f.rowid "
         f"WHERE resources_fts MATCH ?{type_sql}{date_sql} ORDER BY {order} LIMIT ?"
     )
@@ -171,14 +177,16 @@ def list_records(
     date_to: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """List records of one type, newest first.
+    """List records of one type, newest first (future-dated orders come first).
 
     resource_type: e.g. Condition, Encounter, MedicationRequest, Immunization,
-    AllergyIntolerance, Procedure, DiagnosticReport, DocumentReference.
+    AllergyIntolerance, Procedure, DiagnosticReport, DocumentReference, ServiceRequest
+    (orders; `status` active means not yet done).
     """
     date_sql, date_params = _date_filters(date_from, date_to)
     sql = (
-        f"SELECT {SUMMARY_COLUMNS} FROM resources r WHERE resource_type = ?{date_sql} "
+        f"SELECT {SUMMARY_COLUMNS}, {ORDER_COLUMN} FROM resources r "
+        f"WHERE resource_type = ?{date_sql} "
         "ORDER BY date DESC LIMIT ?"
     )
     with _conn() as conn:
@@ -209,7 +217,11 @@ def lab_results(
 
 @mcp.tool(annotations=READ_ONLY)
 def get_record(resource_type: str, resource_id: str) -> dict[str, Any]:
-    """Full detail for one record, including decoded clinical note text if present."""
+    """Full detail for one record, including decoded clinical note text if present.
+
+    resource_type: any type from data_summary, e.g. Condition, DocumentReference,
+    ServiceRequest.
+    """
     with _conn() as conn:
         row = conn.execute(
             "SELECT source, raw FROM resources WHERE resource_type = ? AND resource_id = ?",

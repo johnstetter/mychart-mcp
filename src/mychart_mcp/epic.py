@@ -48,6 +48,9 @@ SEARCHES: list[tuple[str, dict[str, str]]] = [
     ("AllergyIntolerance", {}),
     ("Immunization", {}),
     ("Procedure", {}),
+    # Every order, including pending ones: Epic ignores this SNOMED category (lab) and files
+    # orders under its own, so one search returns them all.
+    ("ServiceRequest", {"category": "108252007"}),
 ]
 
 # Types Epic can search by _lastUpdated (from the August 2026 release; older servers list fewer,
