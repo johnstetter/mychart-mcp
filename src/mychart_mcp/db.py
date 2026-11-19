@@ -66,6 +66,18 @@ CREATE TABLE IF NOT EXISTS sync_state (
     since      TEXT NOT NULL,  -- next incremental sync asks for changes from here (UTC)
     full_at    TEXT NOT NULL   -- when the last full sync ran
 );
+
+-- Last outcome of each sync search, so data_summary can show what came back empty or refused.
+CREATE TABLE IF NOT EXISTS search_status (
+    fhir_base  TEXT NOT NULL,
+    search     TEXT NOT NULL,     -- e.g. 'Observation (survey)'
+    outcome    TEXT NOT NULL,     -- ok, refused (HTTP 4xx), failed (timeout, 5xx)
+    count      INTEGER,           -- records from the last full search
+    error      TEXT,              -- status and URL path; never the query string
+    checked_at TEXT NOT NULL,
+    proven     INTEGER NOT NULL,  -- has ever succeeded
+    PRIMARY KEY (fhir_base, search)
+);
 """.replace("{IMPORT_META}", IMPORT_META)
 
 

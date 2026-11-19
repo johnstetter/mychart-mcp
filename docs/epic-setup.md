@@ -85,7 +85,9 @@ Everywhere).
 | Practitioner, Organization, Location | `.Read` only |
 
 Anything you leave out simply shows up under **Skipped** when you sync, so a missing API
-is easy to spot.
+is easy to spot. The sync also prints the scopes Epic granted, and `data_summary` lists
+each search that came back empty or refused. A refused search that has never worked
+doesn't hold up the rest of its record type.
 
 Save. The app page now shows a **Non-Production Client ID** (sandbox) and a **Client ID**
 (production). Client IDs aren't secret for a public client, but keep them out of the repo.

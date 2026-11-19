@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 from collections import Counter
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 from socketserver import TCPServer
@@ -71,7 +71,14 @@ NOTE_TYPES = ("text/html", "text/plain", "text/rtf")
 
 
 class FhirError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status  # HTTP status, when the server answered
+
+    @property
+    def refused(self) -> bool:
+        """The server answered and said no (not a timeout or server error)."""
+        return self.status is not None and 400 <= self.status < 500
 
 
 class Http:
@@ -151,7 +158,7 @@ class Http:
                 if resp.status in self.REDIRECT_STATUSES and location and _redirects:
                     return self.get(location, accept, _redirects - 1)
                 if resp.status not in self.RETRY_STATUSES or attempt == self.attempts:
-                    raise FhirError(f"HTTP {resp.status} for {_redact(full)}")
+                    raise FhirError(f"HTTP {resp.status} for {_redact(full)}", resp.status)
             time.sleep(2**attempt)
         raise AssertionError("unreachable")
 
@@ -514,6 +521,10 @@ def inline_note(http: Http, doc: dict) -> bool:
     return False
 
 
+def search_label(rtype: str, params: dict[str, str]) -> str:
+    return f"{rtype} ({', '.join(params.values())})" if params else rtype
+
+
 def resolve_medications(http: Http, requests: list[dict], problems: Counter) -> None:
     """Name each request whose medicationReference has no display, from Medication.Read."""
     names: dict[str, str | None] = {}
@@ -535,12 +546,26 @@ def resolve_medications(http: Http, requests: list[dict], problems: Counter) -> 
 
 
 @dataclass
+class SearchResult:
+    count: int = 0
+    error: FhirError | None = None
+    changes_only: bool = False  # searched with _lastUpdated, so count is changes only
+
+    @property
+    def outcome(self) -> str:
+        if self.error is None:
+            return "ok"
+        return "refused" if self.error.refused else "failed"
+
+
+@dataclass
 class Chart:
     resources: list[dict]
     problems: Counter
     complete: set[str]  # types whose every search succeeded
     since: str | None  # None for a full sync
     changes_only: frozenset[str] = frozenset()  # types searched with _lastUpdated
+    searches: dict[str, SearchResult] = field(default_factory=dict)  # by search_label
 
     @property
     def missed_changes(self) -> bool:
@@ -586,27 +611,36 @@ def fetch_chart(
     progress: Callable[[str], object] = lambda _: None,
     stored_note: Callable[[str], dict | None] = lambda _: None,
     changes_only: frozenset[str] = INCREMENTAL_TYPES,
+    proven: frozenset[str] | None = None,
 ) -> Chart:
     """Download what the app may read; with `since`, only changes for `changes_only` types.
 
     Epic returns notes without meta.lastUpdated on every incremental search, so with `since`
     a note whose stored copy (`stored_note(id)`) matches reuses that copy's text.
+
+    A search the server refuses doesn't hold back its type when it's not in `proven` (the
+    searches that have succeeded before; None means all): it never stored any rows.
     """
     problems: Counter = Counter()
     resources = [patient]
     failed: set[str] = set()
+    results: dict[str, SearchResult] = {}
     for rtype, params in SEARCHES:
-        label = f"{rtype} ({params['category']})" if params else rtype
+        label = search_label(rtype, params)
         query = {"patient": patient["id"], **params}
-        if since and rtype in changes_only:
+        incremental = bool(since and rtype in changes_only)
+        if incremental:
             query["_lastUpdated"] = f"ge{since}"
         try:
             found = list(search(http, rtype, query))
         except FhirError as e:
+            results[label] = SearchResult(error=e, changes_only=incremental)
             problems[f"{label}: {e}"] += 1
-            failed.add(rtype)
-            progress(f"  {label:<38} skipped")
+            if not (e.refused and proven is not None and label not in proven):
+                failed.add(rtype)
+            progress(f"  {label:<38} {'refused' if e.refused else 'skipped'}")
             continue
+        results[label] = SearchResult(len(found), changes_only=incremental)
         progress(f"  {label:<38} {len(found)}")
         if rtype == "MedicationRequest":
             resolve_medications(http, found, problems)
@@ -628,7 +662,9 @@ def fetch_chart(
                 progress(f"    note text unchanged for {reused}, reused")
         resources.extend(found)
     complete = {"Patient"} | {rtype for rtype, _ in SEARCHES} - failed
-    return Chart(resources, problems, complete, since, changes_only if since else frozenset())
+    return Chart(
+        resources, problems, complete, since, changes_only if since else frozenset(), results
+    )
 
 
 def _has_text(doc: dict) -> bool:
@@ -649,6 +685,22 @@ def stored_note(conn: sqlite3.Connection, source: str, note_id: str) -> dict | N
         (FHIR_ORIGIN, source, note_id),
     ).fetchone()
     return json.loads(row[0]) if row else None
+
+
+def proven_searches(conn: sqlite3.Connection, fhir_base: str) -> frozenset[str]:
+    """Searches that have succeeded against this server before."""
+    rows = conn.execute(
+        "SELECT search, proven FROM search_status WHERE fhir_base = ?", (fhir_base,)
+    ).fetchall()
+    if rows:
+        return frozenset(search for search, ok in rows if ok)
+    # First sync since search_status existed: treat the searches run before as proven.
+    row = conn.execute(
+        "SELECT searches FROM sync_state WHERE fhir_base = ?", (fhir_base,)
+    ).fetchone()
+    if row is None:
+        return frozenset()
+    return frozenset(search_label(rtype, dict(params)) for rtype, params in json.loads(row[0]))
 
 
 def _searches_signature() -> str:
@@ -727,6 +779,7 @@ def store(
             full_at = previous[1]
             if chart.missed_changes:
                 since = previous[0]  # ask for them again next time
+        _record_searches(conn, fhir_base, chart.searches, started)
         conn.execute(
             "INSERT OR REPLACE INTO sync_state VALUES (?, ?, ?, ?, ?, ?)",
             (
@@ -739,6 +792,37 @@ def store(
             ),
         )
     return counts
+
+
+def _record_searches(
+    conn: sqlite3.Connection,
+    fhir_base: str,
+    searches: dict[str, SearchResult],
+    started: datetime,
+) -> None:
+    """Keep each search's last outcome; a change-only count doesn't replace a full one."""
+    conn.execute(
+        "DELETE FROM search_status WHERE fhir_base = ? AND search NOT IN "
+        f"({','.join('?' * len(searches))})",
+        (fhir_base, *searches),
+    )
+    for label, result in searches.items():
+        count = None if result.error or result.changes_only else result.count
+        conn.execute(
+            "INSERT INTO search_status VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (fhir_base, search) DO UPDATE SET outcome = excluded.outcome, "
+            "count = COALESCE(excluded.count, count), error = excluded.error, "
+            "checked_at = excluded.checked_at, proven = MAX(proven, excluded.proven)",
+            (
+                fhir_base,
+                label,
+                result.outcome,
+                count,
+                str(result.error) if result.error else None,
+                started.isoformat(timespec="seconds"),
+                int(result.error is None),
+            ),
+        )
 
 
 def source_name(patient: dict, fhir_base: str) -> str:

@@ -93,7 +93,12 @@ def _date_filters(date_from: str | None, date_to: str | None) -> tuple[str, list
 
 @mcp.tool(annotations=READ_ONLY)
 def data_summary() -> dict[str, Any]:
-    """What data is available: record counts by type, date range, sources, and import time."""
+    """What data is available: record counts by type, date range, sources, and import time.
+
+    gaps: sync searches that returned nothing ("empty"), that the server refused ("refused",
+    usually an API the app isn't registered for), or that failed (timeouts, server errors).
+    A record type missing here and from record_types was never requested.
+    """
     with _conn() as conn:
         types = conn.execute(
             "SELECT resource_type, COUNT(*) n, MIN(substr(date,1,10)) first, "
@@ -110,7 +115,22 @@ def data_summary() -> dict[str, Any]:
             "record_types": [dict(r) for r in types],
             "sources": sources,
             "imports": [dict(r) for r in imports],
+            "gaps": _gaps(conn),
         }
+
+
+def _gaps(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Sync searches that came back empty, were refused, or failed, with the reason."""
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'search_status'"
+    ).fetchone()
+    if not has_table:
+        return []
+    rows = conn.execute(
+        "SELECT fhir_base, search, outcome, error, checked_at FROM search_status "
+        "WHERE outcome != 'ok' OR count = 0 ORDER BY fhir_base, search"
+    )
+    return [{**dict(r), "outcome": "empty" if r["outcome"] == "ok" else r["outcome"]} for r in rows]
 
 
 @mcp.tool(annotations=READ_ONLY)

@@ -118,7 +118,7 @@ class FakeHttp(epic.Http):
         rel = self.resolve(url).removeprefix(self.base)
         self.requested.append(rel)
         if rel in FORBIDDEN:
-            raise epic.FhirError("HTTP 403")
+            raise epic.FhirError(f"HTTP 403 for {self.base}{rel.split('?')[0]}", 403)
         body = self.routes.get(rel, bundle())
         return body if isinstance(body, bytes) else epic.json.dumps(body).encode()
 
@@ -248,6 +248,51 @@ def test_list_records_filters_by_category(tmp_path, monkeypatch):
     assert len(server.list_records("Condition", category="ENCOUNTER-DIAGNOSIS")) == 3
     dated = server.list_records("Condition", date_from="2020-01-02", category="encounter-diagnosis")
     assert {r["resource_id"] for r in dated} == {"ed1", "ed2"}
+
+
+def test_refused_search_that_never_worked_doesnt_hold_back_its_type():
+    new = epic.fetch_chart(FakeHttp(), ROUTES["Patient/p1"], proven=frozenset())
+    known = epic.fetch_chart(FakeHttp(), ROUTES["Patient/p1"], proven=frozenset({"Procedure"}))
+    assert "Procedure" in new.complete
+    assert new.searches["Procedure"].outcome == "refused"
+    assert "Procedure" not in known.complete  # it worked before, so rows may be missing
+
+
+def test_data_summary_lists_empty_and_refused_searches(synced):
+    gaps = {g["search"]: g for g in server.data_summary()["gaps"]}
+    assert gaps["Procedure"]["outcome"] == "refused"
+    assert gaps["Procedure"]["error"] == f"HTTP 403 for {BASE}/Procedure"
+    assert gaps["Condition (health-concern)"]["outcome"] == "empty"
+    assert "Condition (problem-list-item)" not in gaps
+    assert all("p1" not in (g["error"] or "") for g in gaps.values())
+
+
+def test_change_only_search_keeps_the_last_full_count(synced):
+    path, http, _, _, _ = synced
+    epic_types = frozenset({"Observation"})
+    conn = connect_rw(path)
+    try:
+        patient = epic.fetch_patient(http, "p1")
+        chart = epic.fetch_chart(http, patient, since="2026-10-31", changes_only=epic_types)
+        chart.searches["Observation (laboratory)"].count = 0
+        epic.store(conn, "Example Health", BASE, chart, NOW)
+    finally:
+        conn.close()
+    [(count,)] = rows(
+        path, "SELECT count FROM search_status WHERE search = 'Observation (laboratory)'"
+    )
+    assert count == 2
+
+
+def test_first_sync_after_upgrade_treats_earlier_searches_as_proven(synced):
+    path, *_ = synced
+    conn = connect_rw(path)
+    try:
+        conn.execute("DELETE FROM search_status")
+        proven = epic.proven_searches(conn, BASE)
+    finally:
+        conn.close()
+    assert "Condition (problem-list-item)" in proven and "Procedure" in proven
 
 
 def test_note_text_fetched_as_html_and_searchable(synced):
