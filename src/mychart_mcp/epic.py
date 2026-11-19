@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 from socketserver import TCPServer
 
+from .fhir import extract
 from .importers import delete_records, insert_resource, replace_resource
 
 FHIR_ORIGIN = "fhir"
@@ -505,6 +506,26 @@ def inline_note(http: Http, doc: dict) -> bool:
     return False
 
 
+def resolve_medications(http: Http, requests: list[dict], problems: Counter) -> None:
+    """Name each request whose medicationReference has no display, from Medication.Read."""
+    names: dict[str, str | None] = {}
+    for req in requests:
+        ref = req.get("medicationReference")
+        if req.get("medicationCodeableConcept") or not isinstance(ref, dict):
+            continue
+        url = ref.get("reference") or ""
+        if ref.get("display") or "Medication/" not in url:
+            continue
+        if url not in names:
+            try:
+                names[url] = extract(http.get_json(url)).display
+            except FhirError:
+                names[url] = None
+                problems["medication name unavailable"] += 1
+        if names[url]:
+            ref["display"] = names[url]
+
+
 @dataclass
 class Chart:
     resources: list[dict]
@@ -579,6 +600,8 @@ def fetch_chart(
             progress(f"  {label:<38} skipped")
             continue
         progress(f"  {label:<38} {len(found)}")
+        if rtype == "MedicationRequest":
+            resolve_medications(http, found, problems)
         if rtype == "DocumentReference":
             reused = 0
             for i, doc in enumerate(found, 1):
