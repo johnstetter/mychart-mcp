@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS search_status (
     search     TEXT NOT NULL,     -- e.g. 'Observation (survey)'
     outcome    TEXT NOT NULL,     -- ok, refused (HTTP 4xx), failed (timeout, 5xx)
     count      INTEGER,           -- records from the last full search
-    error      TEXT,              -- status and URL path; never the query string
+    error      TEXT,              -- status, URL path and server's reason; no query string
     checked_at TEXT NOT NULL,
     proven     INTEGER NOT NULL,  -- has ever succeeded
     PRIMARY KEY (fhir_base, search)

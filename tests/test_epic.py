@@ -715,8 +715,9 @@ def test_forget_asks_first(synced, monkeypatch):
 class Scripted:
     """A loopback HTTP/1.1 server that answers each request with the next scripted reply.
 
-    A reply is a status code, "slow" (sleep past the client's timeout), or "drop" (answer,
-    then close the connection without saying so, like a server timing out an idle one).
+    A reply is a status code, (status, Location), (status, body bytes), "slow" (sleep past
+    the client's timeout), or "drop" (answer, then close the connection without saying so,
+    like a server timing out an idle one).
     """
 
     def __init__(self, *replies):
@@ -735,6 +736,12 @@ class Scripted:
                 if reply == "slow":
                     threading.Event().wait(1)  # time.sleep is patched out below
                     reply = 200
+                if isinstance(reply, tuple) and isinstance(reply[1], bytes):
+                    self.send_response(reply[0])
+                    self.send_header("Content-Length", str(len(reply[1])))
+                    self.end_headers()
+                    self.wfile.write(reply[1])
+                    return
                 if isinstance(reply, tuple):  # (status, Location)
                     self.send_response(reply[0])
                     self.send_header("Location", reply[1])
@@ -814,6 +821,27 @@ def test_errors_leave_out_the_patient_id(scripted):
     with pytest.raises(epic.FhirError) as e:
         epic.Http(srv.base).get("Condition?patient=p-secret-id&category=problem-list-item")
     assert "p-secret-id" not in str(e.value)
+
+
+def test_refusal_keeps_the_servers_reason(scripted):
+    outcome = {
+        "resourceType": "OperationOutcome",
+        "issue": [
+            {"code": "required", "details": {"text": "A required parameter is missing."}},
+            {"code": "required", "details": {"text": "A required parameter is missing."}},
+            {"code": "processing", "diagnostics": "Use the type parameter."},
+        ],
+    }
+    srv = scripted((400, json.dumps(outcome).encode()), (404, b"<html>not json</html>"))
+    with pytest.raises(epic.FhirError) as e:
+        epic.Http(srv.base).get("Specimen?patient=p1")
+    assert str(e.value) == (
+        f"HTTP 400 for {srv.base}Specimen: A required parameter is missing.; "
+        "Use the type parameter."
+    )
+    assert e.value.refused
+    with pytest.raises(epic.FhirError, match=r"HTTP 404 for .*Specimen$"):
+        epic.Http(srv.base).get("Specimen")
 
 
 def test_redirects_stay_on_the_same_host(scripted):

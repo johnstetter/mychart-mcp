@@ -158,7 +158,9 @@ class Http:
                 if resp.status in self.REDIRECT_STATUSES and location and _redirects:
                     return self.get(location, accept, _redirects - 1)
                 if resp.status not in self.RETRY_STATUSES or attempt == self.attempts:
-                    raise FhirError(f"HTTP {resp.status} for {_redact(full)}", resp.status)
+                    raise FhirError(
+                        f"HTTP {resp.status} for {_redact(full)}{_outcome(body)}", resp.status
+                    )
             time.sleep(2**attempt)
         raise AssertionError("unreachable")
 
@@ -168,6 +170,23 @@ class Http:
             return json.loads(body)
         except ValueError:
             raise FhirError(f"Response wasn't JSON for {_redact(self.resolve(url))}") from None
+
+
+def _outcome(body: bytes) -> str:
+    """The server's reason for refusing a request, from an OperationOutcome body."""
+    try:
+        doc = json.loads(body)
+    except ValueError:
+        return ""
+    if not isinstance(doc, dict) or doc.get("resourceType") != "OperationOutcome":
+        return ""
+    reasons = (
+        (issue.get("details") or {}).get("text") or issue.get("diagnostics") or issue.get("code")
+        for issue in doc.get("issue") or []
+        if isinstance(issue, dict)
+    )
+    text = "; ".join(dict.fromkeys(r for r in reasons if isinstance(r, str) and r.strip()))
+    return f": {text[:200]}" if text else ""
 
 
 def _redact(url: str) -> str:
