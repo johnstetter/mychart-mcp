@@ -53,7 +53,7 @@ Create**. The form grows as you fill it in. Use these settings:
 | Automatic Client Distribution | **USCDI v3** | Health systems receive the app automatically. With **None**, each one would have to approve it manually. |
 | Public Documentation URL | your repo or docs page | Must be reachable (a private repo won't do) |
 | Endpoint URI (redirect) | `http://127.0.0.1:8765/callback` **and** `https://127.0.0.1:8765/callback` | http for sandbox testing; production requires https. Pick the scheme in the dropdown and type only `127.0.0.1:8765/callback`. |
-| Can Register Dynamic Clients | **checked** | Not used yet; keeps the door open for refresh tokens. Can't be changed after production. |
+| Can Register Dynamic Clients | **checked**, grant type **JWT Bearer** | Required for [saved sign-ins](#saved-sign-ins-unattended-syncs). Can't be changed after production. |
 | Is Confidential Client | unchecked | A desktop CLI can't keep a secret, so it uses PKCE instead |
 | SMART on FHIR Version | **R4** | |
 | SMART Scope Version | **SMART v1** | What `sync` requests (`patient/*.read`); the most widely supported |
@@ -103,7 +103,8 @@ A sandbox MyChart page opens. **Your real MyChart login won't work there.** Use 
 test-patient MyChart logins listed in fhir.epic.com's documentation (look for the test data
 or sandbox test patients page). Approve the consent screen and the browser shows "Signed in".
 The terminal prints one line per search, then a summary. A few hundred records with nothing
-under **Skipped** means the app registration and the code agree.
+under **Skipped** means the app registration and the code agree. The sandbox's consent
+screen only offers "1 hour", so saved sign-ins can't be tested there.
 
 ## 3. Mark the app ready for production
 
@@ -167,7 +168,13 @@ uv run mychart-mcp sync \
     --cert 127.0.0.1.pem --key 127.0.0.1-key.pem
 ```
 
-Sign in with your real MyChart account. A large chart (thousands of notes) takes several
+Sign in with your real MyChart account. MyChart then shows the app's data-use summary
+(**Continue**), the data types to share (keep them all), and how long to allow access.
+**Allow access** stays greyed out until you pick a duration. Pick one longer than an hour if
+you want [saved sign-ins](#saved-sign-ins-unattended-syncs); add `--remember` for that. The
+sync waits up to 15 minutes for you to finish.
+
+A large chart (thousands of notes) takes several
 minutes, because each note's text is a separate request. Progress prints per search. To
 avoid repeating the flags, set `MYCHART_MCP_FHIR_BASE`, `MYCHART_MCP_CLIENT_ID`,
 `MYCHART_MCP_REDIRECT_URI`, `MYCHART_MCP_CERT` and `MYCHART_MCP_KEY`.
@@ -175,7 +182,7 @@ avoid repeating the flags, set `MYCHART_MCP_FHIR_BASE`, `MYCHART_MCP_CLIENT_ID`,
 Run it in your own terminal, not through an AI assistant's shell tool, so your records'
 contents stay out of the assistant's context. The summary contains counts only.
 
-Every run opens the browser. The first run downloads everything; later ones download only
+Without a saved sign-in, every run opens the browser. The first run downloads everything; later ones download only
 what changed (next section).
 
 ## 7. Keeping it current
@@ -268,6 +275,7 @@ Keep any Apple Health source you haven't set up for direct sync.
 | "Couldn't read the Keychain" in the scheduled log | The login Keychain is locked (no GUI login since boot). Log in at the Mac. |
 | "OAuth2 Error: Something went wrong…" on your health system's page | The production client hasn't reached that health system yet (wait up to a day after marking ready), or the system turned off automatic distribution (ask them or Epic support). Epic shows the same page for request problems, so check the sandbox still works. |
 | Sandbox login says "Login failed" | Use a sandbox test-patient login, not your real MyChart or fhir.epic.com account. |
+| **Allow access** is greyed out on the MyChart consent screen | Pick how long to allow access first; it's required. |
 | "Timed out waiting for sign-in." | The browser never reached the redirect. Did it open? If not, open the printed URL yourself. Sign-in must finish within 15 minutes. |
 | Browser certificate warning on `127.0.0.1` | `mkcert -install` didn't complete on the machine running the browser (see step 5). |
 | "Certificate file not found" | Run `mkcert 127.0.0.1` in the folder you pass to `--cert`/`--key`. |
