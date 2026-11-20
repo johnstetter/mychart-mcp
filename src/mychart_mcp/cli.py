@@ -97,8 +97,11 @@ def _sync_sign_in(args: argparse.Namespace, fhir_base: str) -> tuple[str, str] |
     )
     if args.remember:
         try:
-            keychain.save(fhir_base, epic.register_client(login, args.client_id))
+            credential = epic.register_client(login, args.client_id)
+            keychain.save(fhir_base, credential)
             print("Saved this sign-in to the Keychain for unattended syncs.", flush=True)
+            # Epic retires the sign-in's token once it registers a client; use the saved key.
+            return epic.saved_login(credential)
         except (epic.FhirError, keychain.KeychainError) as e:
             print(f"Couldn't save the sign-in ({e}); continuing with this sync.", file=sys.stderr)
     return login.access_token, login.patient_id

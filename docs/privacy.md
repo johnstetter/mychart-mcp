@@ -43,6 +43,6 @@ Claude Desktop.
   deleting the database file deletes everything. [Reference](reference.md#where-the-database-lives)
   lists where it lives.
 - **Access:** remove mychart-mcp (and Apple Health, if you used it) under MyChart → Linked
-  Apps. If you saved a sign-in (experimental), also run `mychart-mcp logout`.
+  Apps. If you saved a sign-in, also run `mychart-mcp logout`.
 
 The [terms of use and privacy statement](terms.md) given to Epic say the same in formal terms.

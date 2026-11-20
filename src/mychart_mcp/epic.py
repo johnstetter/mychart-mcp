@@ -9,6 +9,7 @@ import base64
 import hashlib
 import http.client
 import json
+import re
 import secrets
 import sqlite3
 import ssl
@@ -33,6 +34,8 @@ SCOPES = "openid fhirUser launch/patient patient/*.read"
 # Asks the patient how long to allow access; Epic only lets a sign-in with this scope register
 # a device key (see register_client).
 OFFLINE_SCOPE = "offline_access"
+# Lets the sign-in register a device key; Epic can grant it without offline_access.
+REGISTER_SCOPE = "system/DynamicClient.register"
 
 # Epic requires a category on Condition and Observation searches.
 SEARCHES: list[tuple[str, dict[str, str]]] = [
@@ -161,8 +164,11 @@ class Http:
 
 
 def _redact(url: str) -> str:
-    # Query strings carry the patient ID; keep them out of error messages.
-    return urllib.parse.urlsplit(url)._replace(query="").geturl()
+    # The query string and a Patient read's path carry the patient ID; keep it out of errors.
+    parts = urllib.parse.urlsplit(url)
+    return parts._replace(
+        path=re.sub(r"/Patient/[^/]+", "/Patient/…", parts.path), query=""
+    ).geturl()
 
 
 # --- SMART on FHIR login ------------------------------------------------------------------
@@ -247,7 +253,8 @@ class CallbackListener:
     def port(self) -> int:
         return self.server.server_address[1]
 
-    def wait(self, state: str, timeout: float = 300) -> str:
+    # A first consent has several MyChart screens; 5 minutes proved too short.
+    def wait(self, state: str, timeout: float = 900) -> str:
         deadline = time.monotonic() + timeout
         try:
             while time.monotonic() < deadline:
@@ -383,10 +390,11 @@ def _int_b64url(n: int) -> str:
 
 def register_client(login: Login, software_id: str) -> dict:
     """Register this device as a dynamic client. Returns the credential to save."""
-    if login.scope and OFFLINE_SCOPE not in login.scope.split():
+    granted = login.scope.split()
+    if login.scope and not {OFFLINE_SCOPE, REGISTER_SCOPE} & set(granted):
         raise FhirError(
-            f"Epic didn't grant {OFFLINE_SCOPE} (granted: {login.scope}). "
-            "Choose a longer access period on the consent screen."
+            f"Epic granted neither {OFFLINE_SCOPE} nor {REGISTER_SCOPE} (granted: "
+            f"{login.scope}). Choose a longer access period on the consent screen."
         )
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa

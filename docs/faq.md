@@ -28,9 +28,10 @@ assistants like Claude work well too, but the records used for each answer are s
 company. See [Connect an assistant](connect.md).
 
 **Does it update on its own?**
-Not yet. Run `mychart-mcp sync` when you want fresh records; it signs you in through the
-browser each time. Unattended syncs are written but Epic doesn't allow them for this kind of
-app yet.
+It can. Run `mychart-mcp sync --remember` once and pick an access period longer than an hour
+on the MyChart consent screen. After that, `mychart-mcp sync --unattended` runs without a
+browser, and `mychart-mcp schedule-config` sets up a daily run. See [saved
+sign-ins](epic-setup.md#saved-sign-ins-unattended-syncs).
 
 **How long does a sync take?**
 The first one can take several minutes for a large chart, because each visit note's text is a

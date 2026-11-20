@@ -69,7 +69,7 @@ assistant the records behind each answer go to that provider
 src/mychart_mcp/
   cli.py        the mychart-mcp commands
   epic.py       Epic SMART on FHIR sign-in and download (the only network code)
-  keychain.py   saved sign-ins in the macOS Keychain (experimental)
+  keychain.py   saved sign-ins in the macOS Keychain
   importers.py  Apple Health export.zip → SQLite, and record upserts for sync
   fhir.py       field extraction from FHIR R4 and DSTU2 resources
   db.py         schema and read-write / read-only connections
@@ -93,8 +93,7 @@ FHIR/C-CDA files outside `tests/`.
 
 ## Roadmap
 
-- Direct Epic sync: saved sign-ins that Epic accepts, and de-duplicating records that arrive
-  both via Apple Health and direct sync
+- Direct Epic sync: de-duplicating records that arrive both via Apple Health and direct sync
 - MyChart "Download My Record" (C-CDA) importer
 - Encrypted database (SQLCipher)
 - Care-team messages: a prompt/template for turning chart facts into a clear message, and
