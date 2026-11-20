@@ -243,7 +243,8 @@ class CallbackListener:
     def port(self) -> int:
         return self.server.server_address[1]
 
-    def wait(self, state: str, timeout: float = 300) -> str:
+    # A first consent has several MyChart screens; 5 minutes proved too short.
+    def wait(self, state: str, timeout: float = 900) -> str:
         deadline = time.monotonic() + timeout
         try:
             while time.monotonic() < deadline:
