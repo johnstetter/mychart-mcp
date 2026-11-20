@@ -85,7 +85,9 @@ Everywhere).
 | Practitioner, Organization, Location | `.Read` only |
 
 Anything you leave out simply shows up under **Skipped** when you sync, so a missing API
-is easy to spot.
+is easy to spot. The sync also prints the scopes Epic granted, and `data_summary` lists
+each search that came back empty or refused. A refused search that has never worked
+doesn't hold up the rest of its record type.
 
 Save. The app page now shows a **Non-Production Client ID** (sandbox) and a **Client ID**
 (production). Client IDs aren't secret for a public client, but keep them out of the repo.
@@ -281,6 +283,7 @@ Keep any Apple Health source you haven't set up for direct sync.
 | Browser certificate warning on `127.0.0.1` | `mkcert -install` didn't complete on the machine running the browser (see step 5). |
 | "Certificate file not found" | Run `mkcert 127.0.0.1` in the folder you pass to `--cert`/`--key`. |
 | A search listed under **Skipped** with `HTTP 403` | That API isn't enabled for the app, or the health system doesn't offer it. |
+| A search listed under **Skipped** with `HTTP 400` | The server rejected the request itself, though the API is granted. The text after the colon, when there is one, is the server's reason. |
 | A search listed under **Skipped** with "timed out" | The server was slow even after three tries (120 s each). Other searches are kept. Later, run what the summary suggests: `sync`, or `sync --full` after a full sync that missed a change-only type. |
 | "Downloading your whole chart (full sync)" when you expected changes only | One of the [full-sync triggers](#7-keeping-it-current): 30 days since the last full sync, a different `--name` or patient, a new version that changed the searches, or `--full`. |
 | "Downloading changes since … (none; the rest in full)" | The server's CapabilityStatement lists `_lastUpdated` for none of those types (older Epic releases), so every run refetches everything. Correct, just slower. |

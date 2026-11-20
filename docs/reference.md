@@ -49,7 +49,7 @@ What the MCP server offers your assistant. All are read-only.
 
 | Tool | Purpose |
 |---|---|
-| `data_summary` | Record counts, date ranges, sources, and when each export or health system was last imported |
+| `data_summary` | Record counts, date ranges, sources, when each export or health system was last imported, and which sync searches came back empty or refused |
 | `search_records` | Full-text search over names, codes (ICD-10, SNOMED, LOINC, …) and descriptive text |
 | `condition_timeline` | Date-ordered evidence for a condition across all record types |
 | `list_records` | Records of one type, newest first |

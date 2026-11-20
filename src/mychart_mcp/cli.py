@@ -95,6 +95,9 @@ def _sync_sign_in(args: argparse.Namespace, fhir_base: str) -> tuple[str, str] |
         open_url=open_url,
         offline=args.remember,
     )
+    if login.scope:
+        # Epic grants only the APIs picked at app registration; this shows which.
+        print(f"Granted scopes: {login.scope}", flush=True)
     if args.remember:
         try:
             credential = epic.register_client(login, args.client_id)
@@ -158,6 +161,7 @@ def _sync(args: argparse.Namespace) -> int:
                 progress=lambda s: print(s, flush=True),
                 stored_note=lambda note_id: epic.stored_note(conn, source, note_id),
                 changes_only=changes_only,
+                proven=epic.proven_searches(conn, fhir_base),
             )
         except (epic.FhirError, OSError) as e:
             print(e, file=sys.stderr)
