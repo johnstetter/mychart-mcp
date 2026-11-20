@@ -81,6 +81,7 @@ Everywhere).
 | Encounter | `.Read` and `.Search` |
 | MedicationRequest, Medication | `MedicationRequest.Search`, `Medication.Read` |
 | AllergyIntolerance, Immunization, Procedure | `.Search` |
+| ServiceRequest | `ServiceRequest.Read (Orders)`, `ServiceRequest.Search (Orders)` (+ Outside Record): every order, including pending ones |
 | Practitioner, Organization, Location | `.Read` only |
 
 Anything you leave out simply shows up under **Skipped** when you sync, so a missing API
@@ -199,8 +200,8 @@ Re-runs are **incremental**: the output starts with "Downloading changes since <
   full sync's time goes, since each note is a separate request. A full sync always refetches
   it.
 - **What's always refetched in full:** Condition, MedicationRequest, AllergyIntolerance,
-  Immunization and Procedure. Epic can filter these only by clinical date, which would miss
-  late corrections, and they're small.
+  Immunization, Procedure and ServiceRequest. Epic can filter these only by clinical date,
+  which would miss late corrections, and they're small.
 - **Full syncs:** a change-only search can't report records deleted upstream, so a full
   sync still runs:
   - on the first sync, including the first one after upgrading from a version without
