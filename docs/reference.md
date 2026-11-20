@@ -14,11 +14,11 @@ project folder as `uv run mychart-mcp <command>`; `--help` on any command lists 
 | `forget apple_health\|fhir [--source NAME]` | Delete the records from one origin, or one health system; asks first (`--yes` skips) |
 | `client-config claude\|claude-code\|hermes` | Set up an AI assistant ([Connect an assistant](connect.md)) |
 | `serve` | The MCP server itself; your assistant starts it |
-| `logout --fhir-base URL` | Delete a sign-in saved by `sync --remember` (experimental) |
-| `schedule-config` | Print a macOS LaunchAgent for daily unattended syncs (experimental) |
+| `logout --fhir-base URL` | Delete a sign-in saved by `sync --remember` |
+| `schedule-config` | Print a macOS LaunchAgent for daily unattended syncs |
 
-Saved sign-ins and scheduled syncs are in the code but [don't work against Epic
-yet](epic-setup.md#saved-sign-ins-experimental-not-working-yet).
+Saved sign-ins need a MyChart that offers an access period longer than an hour; see [saved
+sign-ins](epic-setup.md#saved-sign-ins-unattended-syncs).
 
 ## `sync` options
 
@@ -31,7 +31,7 @@ yet](epic-setup.md#saved-sign-ins-experimental-not-working-yet).
 | `--cert`, `--key` | `MYCHART_MCP_CERT`, `MYCHART_MCP_KEY` | none: mkcert files for an https redirect |
 | `--name` | | the chart's managing organization |
 | `--full` | | off: download everything, not just changes |
-| `--remember`, `--unattended` | | off: saved sign-ins (experimental) |
+| `--remember`, `--unattended` | | off: [saved sign-ins](epic-setup.md#saved-sign-ins-unattended-syncs) |
 
 ## Where the database lives
 

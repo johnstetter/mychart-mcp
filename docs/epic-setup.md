@@ -219,28 +219,33 @@ Re-runs are **incremental**: the output starts with "Downloading changes since <
   recovers them. It says `sync --full` only after a *full* sync that missed labs, reports,
   notes or encounters, because the restart point has already moved past those records.
 
-### Saved sign-ins (experimental, not working yet)
+### Saved sign-ins (unattended syncs)
 
-The code supports unattended syncs through Epic's dynamic client registration: after one
-browser sign-in, `sync --remember` creates an RSA key on this Mac, registers its public half
-with Epic, and stores the key in the Keychain. Later runs (`sync --unattended`, or the
-LaunchAgent from `schedule-config`) sign a five-minute JWT with it instead of opening the
-browser.
-
-In testing this never got past registration. Epic only allows it when the sign-in grants
-`offline_access`, which in turn depends on MyChart offering the patient a choice of how long
-to allow access. Epic's sandbox shows a fixed "1 hour" and drops `offline_access`, and the
-app can't be changed to fix that: checking **Can Register Dynamic Clients** forces the app to
-be a public client, and the persistent-access options only exist for confidential clients.
-A health system's own MyChart may still offer durations; if yours does, try:
+After one browser sign-in, `sync --remember` creates an RSA key on this Mac, registers its
+public half with Epic (dynamic client registration), and stores the key in the Keychain.
+Later runs (`sync --unattended`, or the LaunchAgent from `schedule-config`) sign a
+five-minute JWT with it instead of opening the browser.
 
 ```sh
-uv run mychart-mcp sync --remember   # plus the step 6 flags; pick the longest duration
+uv run mychart-mcp sync --remember   # plus the step 6 flags
 ```
 
-If Epic doesn't grant it, the run says "Epic didn't grant offline_access" and syncs as
-usual. If it does, `sync --unattended` and `schedule-config` take it from there; the key is
-stored with `/usr/bin/security` (service `mychart-mcp`, one item per FHIR base URL), and
+On the consent screen, pick an access period longer than **1 hour** (the longest is
+simplest). Epic then grants `system/DynamicClient.register`, which is what registration
+needs. It doesn't grant `offline_access` to a public app like this one, and doesn't need to.
+Epic's sandbox only offers "1 hour", so this can't be tested there; it works against a
+production Epic server whose MyChart offers a choice of access periods.
+
+The run says "Saved this sign-in to the Keychain for unattended syncs." and continues with a
+token from the saved key. Then:
+
+```sh
+uv run mychart-mcp sync --unattended   # no browser; schedule-config runs this daily
+```
+
+The saved key works until the access period you picked ends or you remove the app in
+MyChart. It's stored with `/usr/bin/security` (service `mychart-mcp`, one item per FHIR base
+URL), so anyone signed in to your Mac account can use it.
 `mychart-mcp logout --fhir-base <R4 base>` deletes it.
 
 ### If you also imported from Apple Health
@@ -263,14 +268,14 @@ Keep any Apple Health source you haven't set up for direct sync.
 | "Couldn't read the Keychain" in the scheduled log | The login Keychain is locked (no GUI login since boot). Log in at the Mac. |
 | "OAuth2 Error: Something went wrong…" on your health system's page | The production client hasn't reached that health system yet (wait up to a day after marking ready), or the system turned off automatic distribution (ask them or Epic support). Epic shows the same page for request problems, so check the sandbox still works. |
 | Sandbox login says "Login failed" | Use a sandbox test-patient login, not your real MyChart or fhir.epic.com account. |
-| "Timed out waiting for sign-in." | The browser never reached the redirect. Did it open? If not, open the printed URL yourself. Sign-in must finish within 5 minutes. |
+| "Timed out waiting for sign-in." | The browser never reached the redirect. Did it open? If not, open the printed URL yourself. Sign-in must finish within 15 minutes. |
 | Browser certificate warning on `127.0.0.1` | `mkcert -install` didn't complete on the machine running the browser (see step 5). |
 | "Certificate file not found" | Run `mkcert 127.0.0.1` in the folder you pass to `--cert`/`--key`. |
 | A search listed under **Skipped** with `HTTP 403` | That API isn't enabled for the app, or the health system doesn't offer it. |
 | A search listed under **Skipped** with "timed out" | The server was slow even after three tries (120 s each). Other searches are kept. Later, run what the summary suggests: `sync`, or `sync --full` after a full sync that missed a change-only type. |
 | "Downloading your whole chart (full sync)" when you expected changes only | One of the [full-sync triggers](#7-keeping-it-current): 30 days since the last full sync, a different `--name` or patient, a new version that changed the searches, or `--full`. |
 | "Downloading changes since … (none; the rest in full)" | The server's CapabilityStatement lists `_lastUpdated` for none of those types (older Epic releases), so every run refetches everything. Correct, just slower. |
-| "Epic didn't grant offline_access" with `--remember` | MyChart didn't offer a choice of how long to allow access, so the sign-in can't be saved ([saved sign-ins](#saved-sign-ins-experimental-not-working-yet)). The sync itself carries on. |
+| "Epic granted neither offline_access nor system/DynamicClient.register" with `--remember` | The access period was "1 hour", or MyChart didn't offer a choice, so the sign-in can't be saved ([saved sign-ins](#saved-sign-ins-unattended-syncs)). The sync itself carries on. |
 | "Redirect URI must be a loopback address" / "needs an explicit port" | Use `http(s)://127.0.0.1:<port>/callback`, exactly as registered. |
 
 ## Code map
