@@ -9,6 +9,7 @@ import base64
 import hashlib
 import http.client
 import json
+import re
 import secrets
 import sqlite3
 import ssl
@@ -159,8 +160,11 @@ class Http:
 
 
 def _redact(url: str) -> str:
-    # Query strings carry the patient ID; keep them out of error messages.
-    return urllib.parse.urlsplit(url)._replace(query="").geturl()
+    # The query string and a Patient read's path carry the patient ID; keep it out of errors.
+    parts = urllib.parse.urlsplit(url)
+    return parts._replace(
+        path=re.sub(r"/Patient/[^/]+", "/Patient/…", parts.path), query=""
+    ).geturl()
 
 
 # --- SMART on FHIR login ------------------------------------------------------------------

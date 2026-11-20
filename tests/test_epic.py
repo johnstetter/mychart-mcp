@@ -654,6 +654,16 @@ def test_client_errors_are_not_retried(scripted):
     assert len(srv.paths) == 1
 
 
+def test_errors_leave_out_the_patient_id(scripted):
+    srv = scripted(401, 403)
+    with pytest.raises(epic.FhirError) as e:
+        epic.Http(srv.base).get("Patient/p-secret-id")
+    assert str(e.value) == f"HTTP 401 for {srv.base}Patient/…"
+    with pytest.raises(epic.FhirError) as e:
+        epic.Http(srv.base).get("Condition?patient=p-secret-id&category=problem-list-item")
+    assert "p-secret-id" not in str(e.value)
+
+
 def test_redirects_stay_on_the_same_host(scripted):
     srv = scripted((302, "/R4/Binary/moved"), 200, (302, "https://elsewhere.test/Binary/x"))
     http = epic.Http(srv.base)
