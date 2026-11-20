@@ -173,6 +173,30 @@ def test_unattended_with_saved_login_syncs(fake_security, credential, monkeypatc
     assert run_cli(monkeypatch, "sync", "--unattended", "--fhir-base", BASE) == 0
 
 
+def test_remember_syncs_with_the_saved_key(fake_security, posts, monkeypatch, tmp_path):
+    monkeypatch.setenv("MYCHART_MCP_DB", str(tmp_path / "health.db"))
+    login = epic.Login("browser-token", "p1", SMART, "openid system/DynamicClient.register")
+    monkeypatch.setattr(epic, "login", lambda *a, **k: login)
+    tokens = []
+
+    def fetch_patient(http, pid):
+        tokens.append(http.token)
+        return {"resourceType": "Patient", "id": pid}
+
+    monkeypatch.setattr(epic, "fetch_patient", fetch_patient)
+    monkeypatch.setattr(
+        epic,
+        "fetch_chart",
+        lambda http, patient, since, progress, **_: epic.Chart(
+            [patient], Counter(), {"Patient"}, since
+        ),
+    )
+    argv = ["sync", "--remember", "--fhir-base", BASE, "--client-id", "app-client-id"]
+    assert run_cli(monkeypatch, *argv) == 0
+    assert tokens == ["fresh"]  # Epic retires the browser token once it registers a client
+    assert keychain.load(BASE)["client_id"] == "dyn-123"
+
+
 def test_logout_removes_saved_login(fake_security, credential, monkeypatch):
     keychain.save(BASE, credential)
     assert run_cli(monkeypatch, "logout", "--fhir-base", BASE) == 0
