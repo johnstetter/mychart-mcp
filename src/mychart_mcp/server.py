@@ -212,7 +212,7 @@ def list_records(
 
     resource_type: e.g. Condition, Encounter, MedicationRequest, Immunization,
     AllergyIntolerance, Procedure, DiagnosticReport, DocumentReference, ServiceRequest
-    (orders; `status` active means not yet done).
+    (orders; `status` active means not yet done), Appointment, Device.
     category: optional category code or name, e.g. "problem-list-item" (the problem list,
     which encounter diagnoses otherwise crowd out), "encounter-diagnosis", "laboratory".
     """

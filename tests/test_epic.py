@@ -258,6 +258,26 @@ def test_refused_search_that_never_worked_doesnt_hold_back_its_type():
     assert "Procedure" not in known.complete  # it worked before, so rows may be missing
 
 
+def test_appointment_dated_by_its_start():
+    from mychart_mcp.fhir import extract
+
+    x = extract(
+        {
+            "resourceType": "Appointment",
+            "id": "a1",
+            "status": "booked",
+            "start": "2026-12-03T09:00:00Z",
+            "end": "2026-12-03T09:30:00Z",
+            "created": "2026-11-01",
+        }
+    )
+    assert (x.date, x.end_date, x.status) == (
+        "2026-12-03T09:00:00Z",
+        "2026-12-03T09:30:00Z",
+        "booked",
+    )
+
+
 def test_data_summary_lists_empty_and_refused_searches(synced):
     gaps = {g["search"]: g for g in server.data_summary()["gaps"]}
     assert gaps["Procedure"]["outcome"] == "refused"

@@ -47,6 +47,11 @@ DATE_PATHS = {
         "occurrenceTiming.event",
         "authoredOn",
     ],
+    "Appointment": ["start", "requestedPeriod.start", "created"],
+    "DeviceRequest": ["occurrenceDateTime", "occurrencePeriod.start", "authoredOn"],
+    "Goal": ["startDate", "target.dueDate", "statusDate"],
+    "QuestionnaireResponse": ["authored"],
+    "CareTeam": ["period.start"],
 }
 GENERIC_DATE_PATHS = ["effectiveDateTime", "period.start", "date", "issued", "authoredOn"]
 
@@ -59,6 +64,7 @@ END_PATHS = [
     "performedPeriod.end",
     "context.period.end",
     "occurrencePeriod.end",
+    "end",  # Appointment
 ]
 
 CONCEPT_PATHS = [

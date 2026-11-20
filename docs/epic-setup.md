@@ -209,8 +209,9 @@ Re-runs are **incremental**: the output starts with "Downloading changes since <
   full sync's time goes, since each note is a separate request. A full sync always refetches
   it.
 - **What's always refetched in full:** Condition, MedicationRequest, AllergyIntolerance,
-  Immunization, Procedure and ServiceRequest. Epic can filter these only by clinical date,
-  which would miss late corrections, and they're small.
+  Immunization, Procedure and the types added for orders, appointments, devices, care
+  plans, goals and care teams. Epic can filter these only by clinical date, which would
+  miss late corrections, and they're small.
 - **Full syncs:** a change-only search can't report records deleted upstream, so a full
   sync still runs:
   - on the first sync, including the first one after upgrading from a version without
