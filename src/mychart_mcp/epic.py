@@ -55,6 +55,26 @@ SEARCHES: list[tuple[str, dict[str, str]]] = [
     # Every order, including pending ones: Epic ignores this SNOMED category (lab) and files
     # orders under its own, so one search returns them all.
     ("ServiceRequest", {"category": "108252007"}),
+    # More USCDI v3 types. Epic offers Appointment, DeviceRequest and DeviceUseStatement only to
+    # apps that health systems approve by hand; others get HTTP 403, recorded as a gap.
+    ("Observation", {"category": "survey"}),
+    ("Observation", {"category": "functional-status"}),
+    ("Observation", {"category": "disability-status"}),
+    ("Observation", {"category": "cognitive-status"}),
+    ("Observation", {"category": "exam"}),
+    ("Observation", {"category": "activity"}),
+    ("Appointment", {}),
+    ("Device", {}),
+    ("DeviceRequest", {}),
+    ("DeviceUseStatement", {}),
+    ("CarePlan", {"category": "assess-plan"}),
+    ("CarePlan", {"category": "38717003"}),  # SNOMED longitudinal care plan
+    ("Goal", {}),
+    ("QuestionnaireResponse", {}),
+    ("CareTeam", {}),
+    # Not searched: MedicationDispense (a production Epic server timed out on every search, even
+    # one year), Specimen (Epic searches it only by _id), MedicationStatement (no R4 API) and
+    # MedicationAdministration (not offered to patient apps).
 ]
 
 # Types Epic can search by _lastUpdated (from the August 2026 release; older servers list fewer,
