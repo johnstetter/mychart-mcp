@@ -61,28 +61,43 @@ Create**. The form grows as you fill it in. Use these settings:
 
 ### Incoming APIs
 
-Use the search box and move over only **(R4)** entries. Leave out anything marked
-Create, Update, DSTU2 or STU3, and billing or admin APIs such as Account, Coverage,
-ExplanationOfBenefit and scheduling. Those can stop the app qualifying for automatic
-distribution.
+Use the search box and move over only **(R4)** entries, using these exact names. Leave out
+anything marked Create, Update, DSTU2 or STU3, and billing or admin APIs such as Account,
+Coverage and ExplanationOfBenefit. "+ Outside Record" means also take the API's Outside
+Record version, which covers data your health system received from other organizations
+(Care Everywhere).
 
-Take both the **(Patient Chart)** and **(Outside Record)** versions where both exist.
-Outside Record covers data your health system received from other organizations (Care
-Everywhere).
-
-| Resource | APIs |
+| Resource | APIs (R4) |
 |---|---|
 | Patient | `Patient.Read (Demographics)` |
-| Condition | `Condition.Search`: Problems, Encounter Diagnosis, Health Concerns, Care Plan Problem, and their Outside Record versions |
-| Observation | `Observation.Search`: Labs, Vital Signs, Social History, plus Outside Record versions |
-| DiagnosticReport | `.Read` and `.Search` |
-| DocumentReference | `DocumentReference.Search (Clinical Notes)` (+ Outside Record) |
-| Binary | `Binary.Read (Clinical Notes)`. **Required for note text.** |
-| Encounter | `.Read` and `.Search` |
-| MedicationRequest, Medication | `MedicationRequest.Search`, `Medication.Read` |
-| AllergyIntolerance, Immunization, Procedure | `.Search` |
-| ServiceRequest | `ServiceRequest.Read (Orders)`, `ServiceRequest.Search (Orders)` (+ Outside Record): every order, including pending ones |
-| Practitioner, Organization, Location | `.Read` only |
+| Condition | `Condition.Search`: Problems, Encounter Diagnosis, Health Concerns, Care Plan Problem, Outside Record Problems, Outside Record Encounter Diagnosis, Outside Record Health Concern |
+| Observation | `Observation.Search`: Labs, Vital Signs, Social History, Assessments, SDOH Assessments, SmartData Elements, Study Finding, and Outside Record Results, Vital Signs, Smoking Status, Activities of Daily Living, Occupation, Screening Assessment, SDOH Assessment, Sexual Orientation |
+| DiagnosticReport | `.Read (Results)`, `.Search (Results)`, + Outside Record Results for both |
+| DocumentReference | `DocumentReference.Search`: Clinical Notes, Labs, Generated CDAs, Outside Record - Clinical Notes |
+| Binary | `Binary.Read`: Clinical Notes, Labs, Study, Generated CDAs, Outside Record - Clinical Notes. **Clinical Notes is required for note text.** |
+| Encounter | `.Read (Patient Chart)`, `.Search (Patient Chart)`, + Outside Record for both |
+| MedicationRequest | `MedicationRequest.Search (Signed Medication Order)` + Outside Record |
+| Medication | `.Read` and `.Search (Organization Med List)`, + Outside Record for both |
+| AllergyIntolerance, Immunization | `.Search (Patient Chart)` + Outside Record |
+| Procedure | `Procedure.Search`: Orders, Surgeries, SDOH Intervention, Outside Record |
+| ServiceRequest | `ServiceRequest.Read (Orders)`, `ServiceRequest.Search (Orders)` + Outside Record: every order, including pending ones |
+| Device | `Device.Search (Implants)` + Outside Record |
+| CarePlan | `CarePlan.Search`: Longitudinal, Encounter, Outside Record |
+| Goal | `Goal.Search`: Patient, Care Plan Goal, Outside Record |
+| CareTeam | `CareTeam.Search (Longitudinal CareTeam)` + Outside Record |
+| Specimen | `Specimen.Search (Patient Chart)` + Outside Record. Not used yet: Epic only searches specimens by ID, not by patient, so the sync can't list them. |
+| MedicationDispense | `MedicationDispense.Search (Fill Status)` + Outside Record. Not used yet: a production Epic server didn't answer within 2 minutes, whatever the date range. |
+| QuestionnaireResponse | `QuestionnaireResponse.Search (Outside Record)` |
+| Practitioner, Organization, Location | `.Read (Organizational Directory)` + Outside Record |
+
+That's 78 APIs, all eligible for USCDI v3 distribution. Not every API is:
+Appointment, `Device.Search (External Devices)`, DeviceRequest, DeviceUseStatement,
+`CarePlan.Search (Outpatient)`, patient-entered questionnaires, Observation Activities of
+Daily Living and Core Characteristics, scanned documents (Document Information) and
+Radiology Results aren't. Adding any of them means each health system has to approve the
+app by hand. The sync still asks for appointments and those device types and reports them
+as refused. Epic has no R4 MedicationStatement API, and MedicationAdministration isn't
+offered to patient apps.
 
 Anything you leave out simply shows up under **Skipped** when you sync, so a missing API
 is easy to spot. The sync also prints the scopes Epic granted, and `data_summary` lists
@@ -105,9 +120,10 @@ MYCHART_MCP_DB=/tmp/sandbox.db uv run mychart-mcp sync --sandbox --client-id <no
 A sandbox MyChart page opens. **Your real MyChart login won't work there.** Use one of the
 test-patient MyChart logins listed in fhir.epic.com's documentation (look for the test data
 or sandbox test patients page). Approve the consent screen and the browser shows "Signed in".
-The terminal prints one line per search, then a summary. A few hundred records with nothing
-under **Skipped** means the app registration and the code agree. The sandbox's consent
-screen only offers "1 hour", so saved sign-ins can't be tested there.
+The terminal prints one line per search, then a summary. A few hundred records means the
+app registration and the code agree. Expect Appointment, DeviceRequest and
+DeviceUseStatement under **Skipped** (refused, as above). The sandbox's consent screen only
+offers "1 hour", so saved sign-ins can't be tested there.
 
 ## 3. Mark the app ready for production
 
@@ -121,14 +137,44 @@ change.
   Individual/Caregiver.
 - **Terms and Conditions Secure URL:** must be a public https page, **without a `#`
   fragment** (the form rejects it). This repo uses [`TERMS.md`](https://github.com/johnstetter/mychart-mcp/blob/main/TERMS.md).
-- **Data Use Questionnaire:** answer truthfully. For this design: stored only on the
-  user's device, no developer servers, never sold or shared, deletable at any time, and data
-  goes to an AI provider only if the user connects a hosted assistant.
-- Accept the open.epic terms of use, then **Save & Ready for Production**.
+- **Data Use Questionnaire:** open it from the app page. Epic shows your answers to health
+  systems and to patients on the consent screen, and false answers can get the app
+  suspended. Click **"I understand that customers will have access to my responses…"** to
+  see the questions. There are two versions (tabs dated 2021 and 2018) that ask mostly the
+  same things; answer both. **Each question has its own Save Changes button.** For this
+  design (data stays on the user's device; an AI assistant the user connects can read it):
 
-Epic then delivers the production client ID to every health system that qualifies. **This
-can take up to about a day.** Until then, your health system shows a generic "OAuth2 Error:
-Something went wrong trying to authorize the client".
+  | Question | Answer |
+  |---|---|
+  | Who offers the app | An individual or independent developer |
+  | Funding | Produced by volunteers / open source |
+  | Where user data is stored | Locally on the user's device (only) |
+  | Who else has access | Apps that users authorize |
+  | Users approve sharing with each entity | Yes, users specifically approve for each entity (2018: "Users authorize access and sharing … generally and are not notified") |
+  | Users notified of each access | No |
+  | Complete record of collected data | Yes |
+  | Users can delete all data | Yes |
+  | Data retained after the user deletes the app | No |
+  | How long data is stored | Indefinitely (until the user deletes it) |
+  | Used beyond direct service to the user | No |
+  | Other people in the record used | No one |
+  | Record of who accessed data | No |
+  | Business associate agreement | No |
+
+  The 2021 version also has two follow-ups (how long data is stored; whether users can
+  delete it) that only appear for some storage answers. If the app page still says a
+  recommended questionnaire has unanswered questions, find and answer those as above. It
+  says "All recommended questionnaires have been filled out" when you're done.
+- Tick **I accept the terms of use of open.epic**, then **Save & Ready for Production**.
+
+Epic then delivers the production client ID to every health system that qualifies, often
+within minutes and **at most about a day**. Until then, your health system shows a generic
+"OAuth2 Error: Something went wrong trying to authorize the client".
+
+**Client ID Downloads** on the My Apps page counts those health systems (about 500), not
+people using the app: a download only means that organization's Epic recognizes the client
+ID. **Review & Manage Downloads** lists them with the time each received it; search for your
+health system there to see whether it's ready.
 
 ## 4. Find your health system's FHIR endpoint
 
@@ -210,8 +256,8 @@ Re-runs are **incremental**: the output starts with "Downloading changes since <
   it.
 - **What's always refetched in full:** Condition, MedicationRequest, AllergyIntolerance,
   Immunization, Procedure and the types added for orders, appointments, devices, care
-  plans, goals and care teams. Epic can filter these only by clinical date, which would
-  miss late corrections, and they're small.
+  plans, goals and care teams. Epic can filter these only by
+  clinical date, which would miss late corrections, and they're small.
 - **Full syncs:** a change-only search can't report records deleted upstream, so a full
   sync still runs:
   - on the first sync, including the first one after upgrading from a version without
