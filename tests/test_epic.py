@@ -71,6 +71,23 @@ ROUTES = {
         }
     ),
     "Binary/n1-html": NOTE.encode(),
+    "MedicationRequest?patient=p1": bundle(
+        {
+            "resourceType": "MedicationRequest",
+            "id": "m1",
+            "category": [{"text": "Outpatient"}],
+            "medicationReference": {"reference": "Medication/med1", "display": "Cetirizine 10 mg"},
+            "authoredOn": "2025-03-01",
+        },
+        {
+            "resourceType": "MedicationRequest",
+            "id": "m2",
+            "category": [{"text": "Community"}],
+            "medicationReference": {"reference": "Medication/med2"},
+            "authoredOn": "2025-04-01",
+        },
+    ),
+    "Medication/med2": {"resourceType": "Medication", "id": "med2", "code": {"text": "Saline"}},
     "ServiceRequest?patient=p1&category=108252007": bundle(
         {
             "resourceType": "ServiceRequest",
@@ -157,6 +174,25 @@ def test_forbidden_search_is_reported_not_fatal(synced):
     _, _, _, problems, counts = synced
     assert any(p.startswith("Procedure:") for p in problems)
     assert counts["Patient"] == 1
+
+
+def test_medication_request_shows_the_drug_not_the_category(synced):
+    _, http, _, _, _ = synced
+    names = {r["resource_id"]: r["display"] for r in server.list_records("MedicationRequest")}
+    assert names == {"m1": "Cetirizine 10 mg", "m2": "Saline"}  # m2 named via Medication.Read
+    assert "Medication/med1" not in http.requested
+
+
+def test_unnamed_medication_that_cant_be_read_is_reported(tmp_path):
+    routes = {**ROUTES, "Medication/med2": None}
+    http = FakeHttp(routes)
+    FORBIDDEN.add("Medication/med2")
+    try:
+        chart, _ = run_sync(tmp_path / "h.db", http)
+    finally:
+        FORBIDDEN.discard("Medication/med2")
+    assert chart.problems["medication name unavailable"] == 1
+    assert "MedicationRequest" in chart.complete
 
 
 def test_pending_lab_order_is_stored_and_listed(synced):

@@ -197,7 +197,14 @@ def extract(resource: dict) -> Extracted:
     concept = next((resource[p] for p in CONCEPT_PATHS if resource.get(p)), None)
     if isinstance(concept, list):
         concept = concept[0]
-    out.display = _concept_display(concept) or resource.get("description")
+    # Drug name before category, which on MedicationRequest is only "Outpatient" and the like.
+    medication = resource.get("medicationReference")
+    out.display = (
+        _concept_display(resource.get("medicationCodeableConcept"))
+        or (medication.get("display") if isinstance(medication, dict) else None)
+        or _concept_display(concept)
+        or resource.get("description")
+    )
 
     codes: list[str] = []
     for path in CONCEPT_PATHS + ["reasonCode", "bodySite"]:
