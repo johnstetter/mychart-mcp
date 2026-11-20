@@ -55,11 +55,16 @@ def test_registration_sends_public_key_only(credential, posts):
     assert credential["patient"] == "p1"
 
 
-def test_registration_needs_offline_access(posts):
+def test_registration_needs_a_persistent_access_scope(posts):
     login = epic.Login("initial", "p1", SMART, "openid patient/*.read")
-    with pytest.raises(epic.FhirError, match="didn't grant offline_access"):
+    with pytest.raises(epic.FhirError, match="granted neither offline_access nor"):
         epic.register_client(login, "app-client-id")
     assert posts == []
+
+
+def test_registration_scope_alone_is_enough(posts):
+    login = epic.Login("initial", "p1", SMART, "openid system/DynamicClient.register")
+    assert epic.register_client(login, "app-client-id")["client_id"] == "dyn-123"
 
 
 def test_assertion_is_signed_with_the_saved_key(credential):
