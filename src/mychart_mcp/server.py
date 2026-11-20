@@ -37,6 +37,16 @@ SUMMARY_COLUMNS = (
     "resource_type, resource_id, source, date, recorded, end_date, status, "
     "display, codes, value, unit, value_text"
 )
+# A record's category matches by code, display or text, case-insensitively; DSTU2 has one.
+CATEGORY_SQL = """ AND EXISTS (
+    SELECT 1 FROM json_each(CASE json_type(r.raw, '$.category')
+        WHEN 'array' THEN json_extract(r.raw, '$.category')
+        WHEN 'object' THEN json_array(json(json_extract(r.raw, '$.category')))
+        ELSE '[]' END) c
+    WHERE lower(json_extract(c.value, '$.text')) = lower(:category)
+       OR EXISTS (SELECT 1 FROM json_each(c.value, '$.coding') d
+                  WHERE lower(json_extract(d.value, '$.code')) = lower(:category)
+                     OR lower(json_extract(d.value, '$.display')) = lower(:category)))"""
 # Orders keep intent, requester and timing only in the raw resource.
 ORDER_COLUMN = "CASE WHEN r.resource_type = 'ServiceRequest' THEN r.raw END AS order_raw"
 
@@ -176,22 +186,28 @@ def list_records(
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = 50,
+    category: str | None = None,
 ) -> list[dict[str, Any]]:
     """List records of one type, newest first (future-dated orders come first).
 
     resource_type: e.g. Condition, Encounter, MedicationRequest, Immunization,
     AllergyIntolerance, Procedure, DiagnosticReport, DocumentReference, ServiceRequest
     (orders; `status` active means not yet done).
+    category: optional category code or name, e.g. "problem-list-item" (the problem list,
+    which encounter diagnoses otherwise crowd out), "encounter-diagnosis", "laboratory".
     """
     date_sql, date_params = _date_filters(date_from, date_to)
+    params: dict[str, Any] = {f"d{i}": p for i, p in enumerate(date_params)}
+    for i in range(len(date_params)):
+        date_sql = date_sql.replace("?", f":d{i}", 1)
     sql = (
         f"SELECT {SUMMARY_COLUMNS}, {ORDER_COLUMN} FROM resources r "
-        f"WHERE resource_type = ?{date_sql} "
-        "ORDER BY date DESC LIMIT ?"
+        f"WHERE resource_type = :rtype{date_sql}{CATEGORY_SQL if category else ''} "
+        "ORDER BY date DESC LIMIT :limit"
     )
+    params |= {"rtype": resource_type, "limit": _limit(limit), "category": category}
     with _conn() as conn:
-        rows = conn.execute(sql, [resource_type, *date_params, _limit(limit)])
-        return [_summarize(r) for r in rows]
+        return [_summarize(r) for r in conn.execute(sql, params)]
 
 
 @mcp.tool(annotations=READ_ONLY)

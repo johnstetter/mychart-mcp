@@ -180,6 +180,40 @@ def test_pending_lab_order_is_stored_and_listed(synced):
     assert record["resource"]["intent"] == "order"
 
 
+def test_list_records_filters_by_category(tmp_path, monkeypatch):
+    path = tmp_path / "health.db"
+    monkeypatch.setenv("MYCHART_MCP_DB", str(path))
+
+    def condition(cid, code, onset):
+        category = {"coding": [{"code": code}], "text": code.replace("-", " ").title()}
+        return {
+            "resourceType": "Condition",
+            "id": cid,
+            "category": [category],
+            "code": {"text": f"Condition {cid}"},
+            "onsetDateTime": onset,
+        }
+
+    routes = {
+        **ROUTES,
+        "Condition?patient=p1&category=problem-list-item": bundle(
+            condition("pl1", "problem-list-item", "2015-01-01")
+        ),
+        "Condition?patient=p1&category=encounter-diagnosis": bundle(
+            *(condition(f"ed{i}", "encounter-diagnosis", f"2020-01-{i + 1:02}") for i in range(3))
+        ),
+    }
+    run_sync(path, FakeHttp(routes))
+    newest = server.list_records("Condition", limit=3)
+    assert {r["resource_id"] for r in newest} == {"ed0", "ed1", "ed2"}
+    problems = server.list_records("Condition", category="problem-list-item")
+    assert [r["resource_id"] for r in problems] == ["pl1"]
+    assert server.list_records("Condition", category="Problem List Item") == problems
+    assert len(server.list_records("Condition", category="ENCOUNTER-DIAGNOSIS")) == 3
+    dated = server.list_records("Condition", date_from="2020-01-02", category="encounter-diagnosis")
+    assert {r["resource_id"] for r in dated} == {"ed1", "ed2"}
+
+
 def test_note_text_fetched_as_html_and_searchable(synced):
     _, http, _, _, _ = synced
     assert "Binary/n1-html" in http.requested
