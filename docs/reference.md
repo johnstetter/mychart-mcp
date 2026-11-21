@@ -53,5 +53,5 @@ What the MCP server offers your assistant. All are read-only.
 | `search_records` | Full-text search over names, codes (ICD-10, SNOMED, LOINC, …) and descriptive text |
 | `condition_timeline` | Date-ordered evidence for a condition across all record types |
 | `list_records` | Records of one type, newest first |
-| `lab_results` | Lab values oldest-first, for trends |
+| `lab_results` | Lab values oldest-first, for trends, with each reference range and abnormal flag when the lab gives one |
 | `get_record` | Full detail of one record (and decoded note text, when a source provides it) |

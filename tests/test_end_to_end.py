@@ -12,7 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from mychart_mcp import server
 from mychart_mcp.db import connect_ro, connect_rw
-from mychart_mcp.importers import import_apple_health
+from mychart_mcp.importers import import_apple_health, insert_resource
 
 ICD10 = "http://hl7.org/fhir/sid/icd-10-cm"
 SNOMED = "http://snomed.info/sct"
@@ -77,6 +77,21 @@ RESOURCES = {
         "code": {"text": "Hemoglobin A1c", "coding": [{"system": LOINC, "code": "4548-4"}]},
         "effectiveDateTime": "2020-05-01",
         "valueQuantity": {"value": 5.6, "unit": "%"},
+    },
+    "Observation-potassium.json": {
+        "resourceType": "Observation",
+        "id": "potassium",
+        "code": {"text": "Potassium", "coding": [{"system": LOINC, "code": "2823-3"}]},
+        "effectiveDateTime": "2022-05-01",
+        "valueQuantity": {"value": 5.4, "unit": "mmol/L"},
+        "referenceRange": [
+            {
+                "low": {"value": 3.5, "unit": "mmol/L"},
+                "high": {"value": 5.1, "unit": "mmol/L"},
+                "text": "3.5 - 5.1 mmol/L",
+            }
+        ],
+        "interpretation": [{"coding": [{"code": "H", "display": "High"}]}],
     },
     "DocumentReference-note.json": {
         "resourceType": "DocumentReference",
@@ -145,7 +160,7 @@ def db(tmp_path, monkeypatch, export_zip):
 def test_import_counts_and_permissions(db):
     path, counts = db
     assert counts["Condition"] == 2
-    assert counts["Observation"] == 2
+    assert counts["Observation"] == 3
     assert counts["MedicationRequest"] == 1
     assert oct(path.stat().st_mode & 0o777) == "0o600"
 
@@ -157,7 +172,7 @@ def test_reimport_replaces_rather_than_duplicates(db, export_zip):
     n = conn.execute("SELECT COUNT(*) FROM resources").fetchone()[0]
     fts = conn.execute("SELECT COUNT(*) FROM resources_fts").fetchone()[0]
     conn.close()
-    assert n == fts == 8
+    assert n == fts == 9
 
 
 def test_reimport_under_another_name_keeps_one_import_row(db, export_zip):
@@ -200,6 +215,51 @@ def test_dstu2_recorded_date_used(db):
 def test_lab_trend_is_oldest_first_with_values(db):
     labs = server.lab_results("a1c")
     assert [(r["date"], r["value"]) for r in labs] == [("2020-05-01", 5.6), ("2022-05-01", 5.9)]
+
+
+def test_lab_results_include_reference_range_and_flag(db):
+    (k,) = server.lab_results("potassium")
+    assert (k["value"], k["ref_range"], k["ref_low"], k["ref_high"], k["interpretation"]) == (
+        5.4,
+        "3.5 - 5.1 mmol/L",
+        3.5,
+        5.1,
+        "H",
+    )
+    # No range or flag on the record: the keys are left out, not reported empty.
+    a1c = server.lab_results("a1c")[0]
+    assert not {"ref_range", "ref_low", "ref_high", "interpretation"} & a1c.keys()
+
+
+def test_range_fields_are_in_tool_descriptions():
+    for name in ("lab_results", "search_records"):
+        doc = getattr(server, name).__doc__
+        assert "ref_range" in doc and "{RANGE_DOC}" not in doc
+
+
+def test_old_database_gains_ranges_from_raw(tmp_path, monkeypatch):
+    path = tmp_path / "old.db"
+    monkeypatch.setenv("MYCHART_MCP_DB", str(path))
+    conn = connect_rw(path)
+    resource = RESOURCES["Observation-potassium.json"]
+    insert_resource(conn, "fhir", "Test Health", resource)
+    conn.commit()
+    # Recreate the pre-range schema: drop the new columns, keep the row and its raw JSON.
+    for col in ("ref_low", "ref_high", "ref_range", "interpretation"):
+        conn.execute(f"ALTER TABLE resources DROP COLUMN {col}")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(ToolError, match="mychart-mcp sync"):
+        server.lab_results("potassium")
+    connect_rw(path).close()
+    (k,) = server.lab_results("potassium")
+    assert (k["ref_range"], k["ref_low"], k["ref_high"], k["interpretation"]) == (
+        "3.5 - 5.1 mmol/L",
+        3.5,
+        5.1,
+        "H",
+    )
 
 
 def test_date_filters(db):

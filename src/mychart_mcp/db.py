@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import sys
 from pathlib import Path
+
+from .fhir import interpretation, reference_range
 
 
 def _default_db() -> Path:
@@ -46,6 +49,10 @@ CREATE TABLE IF NOT EXISTS resources (
     value         REAL,
     unit          TEXT,
     value_text    TEXT,
+    ref_low       REAL,            -- first referenceRange, as numbers when given
+    ref_high      REAL,
+    ref_range     TEXT,            -- referenceRange text, or built from low/high
+    interpretation TEXT,           -- abnormal flags, e.g. 'H' or 'L, A'
     raw           TEXT NOT NULL,
     UNIQUE (origin, source, resource_type, resource_id)
 );
@@ -81,7 +88,39 @@ CREATE TABLE IF NOT EXISTS search_status (
 """.replace("{IMPORT_META}", IMPORT_META)
 
 
+RANGE_COLUMNS = {
+    "ref_low": "REAL",
+    "ref_high": "REAL",
+    "ref_range": "TEXT",
+    "interpretation": "TEXT",
+}
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
+    _add_range_columns(conn)
+    _rekey_import_meta(conn)
+
+
+def _add_range_columns(conn: sqlite3.Connection) -> None:
+    """Add the reference range columns to an older database and fill them from raw."""
+    have = {r[1] for r in conn.execute("PRAGMA table_info(resources)")}
+    missing = [c for c in RANGE_COLUMNS if c not in have]
+    if not missing:
+        return
+    with conn:
+        for col in missing:
+            conn.execute(f"ALTER TABLE resources ADD COLUMN {col} {RANGE_COLUMNS[col]}")
+        rows = conn.execute("SELECT rowid, raw FROM resources WHERE resource_type = 'Observation'")
+        for rowid, raw in rows.fetchall():
+            resource = json.loads(raw)
+            conn.execute(
+                "UPDATE resources SET ref_low = ?, ref_high = ?, ref_range = ?, "
+                "interpretation = ? WHERE rowid = ?",
+                (*reference_range(resource), interpretation(resource), rowid),
+            )
+
+
+def _rekey_import_meta(conn: sqlite3.Connection) -> None:
     """Re-key an import_meta from before it had a row per FHIR server."""
     pk = [
         r[1]

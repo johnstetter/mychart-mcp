@@ -110,8 +110,9 @@ def insert_resource(
     cur = conn.execute(
         """INSERT OR IGNORE INTO resources
            (origin, source, resource_type, resource_id, date, recorded, end_date, status,
-            display, codes, value, unit, value_text, raw)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            display, codes, value, unit, value_text, ref_low, ref_high, ref_range,
+            interpretation, raw)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             origin,
             source or "",
@@ -126,6 +127,10 @@ def insert_resource(
             x.value,
             x.unit,
             x.value_text,
+            x.ref_low,
+            x.ref_high,
+            x.ref_range,
+            x.interpretation,
             json.dumps(resource, separators=(",", ":")),
         ),
     )

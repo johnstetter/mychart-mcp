@@ -103,6 +103,10 @@ class Extracted:
     value: float | None = None
     unit: str | None = None
     value_text: str | None = None
+    ref_low: float | None = None
+    ref_high: float | None = None
+    ref_range: str | None = None
+    interpretation: str | None = None
     body: str = ""
 
 
@@ -179,6 +183,53 @@ def _attachment_text(resource: dict) -> Iterator[str]:
         yield _strip_html(text) if "html" in content_type else text
 
 
+def _number(quantity: Any) -> float | None:
+    value = quantity.get("value") if isinstance(quantity, dict) else None
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _range_text(ref: dict) -> str | None:
+    if ref.get("text"):
+        return ref["text"]
+    low, high = ref.get("low") or {}, ref.get("high") or {}
+    lo, hi = _number(low), _number(high)
+    unit = high.get("unit") or low.get("unit") or high.get("code") or low.get("code")
+    suffix = f" {unit}" if unit else ""
+    if lo is not None and hi is not None:
+        return f"{lo:g} - {hi:g}{suffix}"
+    if lo is not None:
+        return f">= {lo:g}{suffix}"
+    if hi is not None:
+        return f"<= {hi:g}{suffix}"
+    return None
+
+
+def reference_range(resource: dict) -> tuple[float | None, float | None, str | None]:
+    """(low, high, text) of the first referenceRange; text notes any further ranges."""
+    ranges = [r for r in resource.get("referenceRange") or [] if isinstance(r, dict)]
+    if not ranges:
+        return None, None, None
+    first = ranges[0]
+    text = _range_text(first)
+    if text and len(ranges) > 1:
+        text += f" (+{len(ranges) - 1} more, see get_record)"
+    return _number(first.get("low")), _number(first.get("high")), text
+
+
+def interpretation(resource: dict) -> str | None:
+    """Abnormal flags (H, L, HH, A, ...): coding codes, else display or text; R4 list or DSTU2."""
+    concepts = resource.get("interpretation")
+    flags: list[str] = []
+    for c in concepts if isinstance(concepts, list) else [concepts]:
+        if not isinstance(c, dict):
+            continue
+        codes = [d["code"] for d in c.get("coding") or [] if d.get("code")]
+        flag = codes[0] if codes else _concept_display(c)
+        if flag:
+            flags.append(flag)
+    return ", ".join(dict.fromkeys(flags)) or None
+
+
 def _strings(obj: Any) -> Iterator[str]:
     if isinstance(obj, dict):
         for key, value in obj.items():
@@ -225,6 +276,8 @@ def extract(resource: dict) -> Extracted:
         out.value_text = resource.get("valueString") or _concept_display(
             resource.get("valueCodeableConcept")
         )
+    out.ref_low, out.ref_high, out.ref_range = reference_range(resource)
+    out.interpretation = interpretation(resource)
 
     parts = list(_strings(resource))
     parts.extend(_attachment_text(resource))

@@ -35,8 +35,23 @@ READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldH
 
 SUMMARY_COLUMNS = (
     "resource_type, resource_id, source, date, recorded, end_date, status, "
-    "display, codes, value, unit, value_text"
+    "display, codes, value, unit, value_text, ref_low, ref_high, ref_range, interpretation"
 )
+# What a result's range and flag fields mean; shared by the tools that return Observations.
+RANGE_DOC = """Observations include, when the record has them: ref_range (the lab's reference
+    range as text, e.g. "3.5 - 5.0 mmol/L"; "(+N more)" means further ranges are in
+    get_record), ref_low / ref_high (the first range as numbers, in the result's unit) and
+    interpretation (the lab's abnormal flag: H high, L low, HH/LL critical, A abnormal, N
+    normal). Use these to say whether a value is high or low; a missing ref_range means the
+    record gives none."""
+
+
+def _range_doc(func):
+    # Runs before @mcp.tool so the registered description has the text filled in.
+    func.__doc__ = func.__doc__.replace("{RANGE_DOC}", RANGE_DOC)
+    return func
+
+
 # A record's category matches by code, display or text, case-insensitively; DSTU2 has one.
 CATEGORY_SQL = """ AND EXISTS (
     SELECT 1 FROM json_each(CASE json_type(r.raw, '$.category')
@@ -78,6 +93,18 @@ def _summarize(row: sqlite3.Row) -> dict[str, Any]:
     if "codes" in out:
         out["codes"] = out["codes"].split()
     return out
+
+
+def _rows(conn: sqlite3.Connection, sql: str, params: Any) -> list[dict[str, Any]]:
+    try:
+        return [_summarize(r) for r in conn.execute(sql, params)]
+    except sqlite3.OperationalError as e:
+        if "no such column" not in str(e):
+            raise
+        raise ToolError(
+            "The database predates a schema change. Run `mychart-mcp sync` or "
+            "`mychart-mcp import` once to upgrade it."
+        ) from e
 
 
 def _date_filters(date_from: str | None, date_to: str | None) -> tuple[str, list[str]]:
@@ -134,6 +161,7 @@ def _gaps(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 @mcp.tool(annotations=READ_ONLY)
+@_range_doc
 def search_records(
     query: str,
     resource_types: list[str] | None = None,
@@ -148,6 +176,7 @@ def search_records(
     resource_types: optional filter, e.g. ["Condition", "Encounter", "DocumentReference",
     "ServiceRequest"].
     date_from / date_to: optional YYYY-MM-DD bounds on the clinical date (inclusive).
+    {RANGE_DOC}
     """
     date_sql, date_params = _date_filters(date_from, date_to)
     type_sql = ""
@@ -166,7 +195,7 @@ def search_records(
     )
     params = [_fts_query(query), *(resource_types or []), *date_params, _limit(limit)]
     with _conn() as conn:
-        return [_summarize(r) for r in conn.execute(sql, params)]
+        return _rows(conn, sql, params)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -227,10 +256,11 @@ def list_records(
     )
     params |= {"rtype": resource_type, "limit": _limit(limit), "category": category}
     with _conn() as conn:
-        return [_summarize(r) for r in conn.execute(sql, params)]
+        return _rows(conn, sql, params)
 
 
 @mcp.tool(annotations=READ_ONLY)
+@_range_doc
 def lab_results(
     query: str,
     date_from: str | None = None,
@@ -240,6 +270,7 @@ def lab_results(
     """Lab and vital-sign values matching a name or LOINC code, oldest first (for trends).
 
     query: e.g. "hemoglobin a1c", "LDL", "4548-4".
+    {RANGE_DOC}
     """
     return search_records(
         query,
